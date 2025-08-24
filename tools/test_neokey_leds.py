@@ -4,7 +4,7 @@ from adafruit_seesaw.neopixel import NeoPixel as SSNeoPixel
 
 ADDR = 0x30
 NEO_PWR_PIN  = 5        # common power gate on some batches
-NEO_DATA_PIN = 6       # try 24 first; if no light, change to 6
+NEO_DATA_PIN = 24       # try 24 first; if no light, change to 6
 COUNT = 4
 
 ss = Seesaw(board.I2C(), addr=ADDR)
