@@ -3,11 +3,12 @@ from adafruit_seesaw.seesaw import Seesaw
 
 ss = Seesaw(board.I2C(), addr=0x30)
 
-# Buttons are typically on seesaw pins 24..27; read as a bitfield.
-# (Implementation detail varies by board; this often works out of the box.)
-print("Press keys; Ctrl+C to stop")
+PINS = [24, 25, 26, 27]  # common for NeoKey 1x4
+for p in PINS:
+    ss.pin_mode(p, ss.INPUT_PULLUP)
+
+print("Press/release keys; 1=HIGH, 0=LOW")
 while True:
-    keys = ss.digital_read_bulk((1<<24)|(1<<25)|(1<<26)|(1<<27))
-    # bit set = HIGH; depending on pullups it may invert; we just print the raw
-    print(bin(keys))
+    states = [(1 if ss.digital_read(p) else 0) for p in PINS]
+    print(dict(zip(PINS, states)))
     time.sleep(0.2)
