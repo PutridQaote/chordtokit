@@ -1,16 +1,67 @@
-import busio, board
+# tools/test_oled_text_fill.py
+import busio, board, time, textwrap
 import adafruit_ssd1306
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
+I2C_ADDR = 0x3D     # your detected OLED address
+W, H     = 128, 64  # change to (128, 32) if yours is 32px tall
+
+TEXT = (
+    "THE QUICK BROWN FOX JUMPS OVER THE LAZY DOG 0123456789 "
+    "the quick brown fox jumps over the lazy dog 0123456789"
+)
+
+# Try a scalable TTF first; fallback to PIL default
+def load_font(pt):
+    try:
+        return ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", pt)
+    except Exception:
+        return ImageFont.load_default()
+
+def fit_text(text, w, h, margin=2, max_pt=48, min_pt=6):
+    # Binary search font size that fits both width and height
+    best = (min_pt, [])
+    lo, hi = min_pt, max_pt
+    while lo <= hi:
+        mid = (lo + hi) // 2
+        font = load_font(mid)
+        # wrap by width heuristic, then check bbox
+        # Estimate chars per line from average char width
+        avg_w = max(1, int(font.getlength("M")))
+        chars = max(1, int((w - 2*margin) / (avg_w * 0.6)))
+        wrapped = textwrap.fill(text, width=chars)
+        img = Image.new("1", (w, h))
+        draw = ImageDraw.Draw(img)
+        bbox = draw.multiline_textbbox((margin, margin), wrapped, font=font, spacing=0)
+        tw, th = bbox[2] - bbox[0], bbox[3] - bbox[1]
+        if tw <= (w - 2*margin) and th <= (h - 2*margin):
+            best = (mid, wrapped)
+            lo = mid + 1
+        else:
+            hi = mid - 1
+    return best
+
+# Init display
 i2c = busio.I2C(board.SCL, board.SDA)
-oled = adafruit_ssd1306.SSD1306_I2C(128, 64, i2c, addr=0x3D)  # note 0x3D from detect
+oled = adafruit_ssd1306.SSD1306_I2C(W, H, i2c, addr=I2C_ADDR)
 
-oled.fill(0)
-oled.show()
+# Build image
+img = Image.new("1", (W, H))
+d   = ImageDraw.Draw(img)
 
-image = Image.new("1", (oled.width, oled.height))
-draw = ImageDraw.Draw(image)
-# solid white rectangle filling the display
-draw.rectangle((0, 0, oled.width-1, oled.height-1), outline=1, fill=1)
-oled.image(image)
-oled.show()
+# Border
+d.rectangle((0, 0, W-1, H-1), outline=1, fill=0)
+
+# Fit and draw text
+pt, wrapped = fit_text(TEXT, W, H, margin=2)
+font = load_font(pt)
+d.multiline_text((2, 2), wrapped, font=font, fill=1, spacing=0)
+
+# Show + report
+oled.image(img); oled.show()
+print(f"Rendered with font size: {pt} (addr 0x{I2C_ADDR:02X}, {W}x{H})")
+
+# Hold a moment, then optionally clear on exit:
+time.sleep(20)
+oled.fill(0); oled.show()
+print("Cleared.")

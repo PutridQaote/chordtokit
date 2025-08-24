@@ -1,22 +1,31 @@
 import time, board
 from adafruit_seesaw.seesaw import Seesaw
-from adafruit_seesaw.neopixel import NeoPixel as SSNeoPixel
+try:
+    from adafruit_seesaw.neopixel import NeoPixel as SSNeoPixel
+except Exception as e:
+    raise SystemExit("Missing adafruit-circuitpython-neopixel / seesaw: "+str(e))
 
-I2C_ADDR = 0x30  # NeoKey
-i2c = board.I2C()
-ss = Seesaw(i2c, addr=I2C_ADDR)
+ADDR = 0x30
+print("Init Seesaw @0x30…")
+ss = Seesaw(board.I2C(), addr=ADDR)
 
-# 4 RGB LEDs on NeoKey 1x4
-pixels = SSNeoPixel(ss, 24, 4)  # pin 24 is the NeoPixel line, 4 pixels
-pixels.brightness = 0.3
+# NeoKey 1x4 uses the Seesaw “neopixel” pin 24 with 4 pixels
+PIN = 24
+N   = 4
+print(f"Init NeoPixels on pin {PIN} count {N}…")
+pixels = SSNeoPixel(ss, PIN, N)
+pixels.brightness = 0.2
 
-for i in range(4):
-    pixels.fill((0, 0, 0))
-    pixels[i] = (255, 0, 0)   # Red
-    time.sleep(0.3)
-    pixels[i] = (0, 255, 0)   # Green
-    time.sleep(0.3)
-    pixels[i] = (0, 0, 255)   # Blue
-    time.sleep(0.3)
+def flash(i, rgb):
+    pixels.fill((0,0,0))
+    pixels[i] = rgb
+    print(f"Lit pixel {i} -> {rgb}")
+    time.sleep(0.4)
 
-pixels.fill((0, 0, 0))  # turn off
+for i in range(N):
+    flash(i, (255,0,0))
+    flash(i, (0,255,0))
+    flash(i, (0,0,255))
+
+pixels.fill((0,0,0))
+print("Done.")
