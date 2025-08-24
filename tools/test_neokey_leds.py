@@ -1,31 +1,51 @@
+# tools/test_neokey_leds_strong.py
 import time, board
 from adafruit_seesaw.seesaw import Seesaw
+
+# Some NeoKey 1x4 variants gate NeoPixel power via a seesaw GPIO (often 5).
+# Try enabling it before driving pin 24 (the NeoPixel data pin).
+NEO_PWR_PIN = 5     # try power-enable on 5
+NEO_DATA_PIN = 24   # NeoPixel data on 24
+PIXELS = 4
+
+print("Init Seesaw @0x30...")
+ss = Seesaw(board.I2C(), addr=0x30)
+
+# Try to turn on NeoPixel power (safe even if not needed)
 try:
-    from adafruit_seesaw.neopixel import NeoPixel as SSNeoPixel
+    ss.pin_mode(NEO_PWR_PIN, ss.OUTPUT)
+    ss.digital_write(NEO_PWR_PIN, True)
+    print(f"Enabled NeoPixel power on pin {NEO_PWR_PIN}")
 except Exception as e:
-    raise SystemExit("Missing adafruit-circuitpython-neopixel / seesaw: "+str(e))
+    print(f"(Power pin enable skipped/failed: {e})")
 
-ADDR = 0x30
-print("Init Seesaw @0x30…")
-ss = Seesaw(board.I2C(), addr=ADDR)
+# Import the Seesaw NeoPixel helper only after Seesaw is up
+from adafruit_seesaw.neopixel import NeoPixel as SSNeoPixel
 
-# NeoKey 1x4 uses the Seesaw “neopixel” pin 24 with 4 pixels
-PIN = 24
-N   = 4
-print(f"Init NeoPixels on pin {PIN} count {N}…")
-pixels = SSNeoPixel(ss, PIN, N)
-pixels.brightness = 0.2
+pixels = SSNeoPixel(ss, NEO_DATA_PIN, PIXELS, auto_write=False)  # force manual show
+pixels.brightness = 0.8  # crank it up to be obvious
 
-def flash(i, rgb):
+def wipe(rgb):
     pixels.fill((0,0,0))
-    pixels[i] = rgb
-    print(f"Lit pixel {i} -> {rgb}")
+    pixels.fill(rgb)
+    pixels.show()
+    print(f"Filled {rgb}")
+    time.sleep(0.6)
+
+# Solid wipes
+wipe((255, 255, 255))
+wipe((255,   0,   0))
+wipe((  0, 255,   0))
+wipe((  0,   0, 255))
+
+# Chase with explicit show
+for i in range(PIXELS):
+    pixels.fill((0,0,0))
+    pixels[i] = (255, 255, 255)
+    pixels.show()
+    print(f"Pixel {i} ON")
     time.sleep(0.4)
 
-for i in range(N):
-    flash(i, (255,0,0))
-    flash(i, (0,255,0))
-    flash(i, (0,0,255))
-
 pixels.fill((0,0,0))
+pixels.show()
 print("Done.")
