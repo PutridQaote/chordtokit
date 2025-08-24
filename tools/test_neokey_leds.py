@@ -1,51 +1,30 @@
-# tools/test_neokey_leds_strong.py
 import time, board
 from adafruit_seesaw.seesaw import Seesaw
+from adafruit_seesaw.neopixel import NeoPixel as SSNeoPixel
 
-# Some NeoKey 1x4 variants gate NeoPixel power via a seesaw GPIO (often 5).
-# Try enabling it before driving pin 24 (the NeoPixel data pin).
-NEO_PWR_PIN = 5     # try power-enable on 5
-NEO_DATA_PIN = 24   # NeoPixel data on 24
-PIXELS = 4
+ADDR = 0x30
+NEO_PWR_PIN  = 5        # common power gate on some batches
+NEO_DATA_PIN = 6       # try 24 first; if no light, change to 6
+COUNT = 4
 
-print("Init Seesaw @0x30...")
-ss = Seesaw(board.I2C(), addr=0x30)
-
-# Try to turn on NeoPixel power (safe even if not needed)
+ss = Seesaw(board.I2C(), addr=ADDR)
+# power enable (safe no-op if unused)
 try:
     ss.pin_mode(NEO_PWR_PIN, ss.OUTPUT)
     ss.digital_write(NEO_PWR_PIN, True)
-    print(f"Enabled NeoPixel power on pin {NEO_PWR_PIN}")
+    print("NeoPixel power enabled on pin", NEO_PWR_PIN)
 except Exception as e:
-    print(f"(Power pin enable skipped/failed: {e})")
+    print("Power enable skipped:", e)
 
-# Import the Seesaw NeoPixel helper only after Seesaw is up
-from adafruit_seesaw.neopixel import NeoPixel as SSNeoPixel
+pixels = SSNeoPixel(ss, NEO_DATA_PIN, COUNT, auto_write=False)
+pixels.brightness = 0.8
 
-pixels = SSNeoPixel(ss, NEO_DATA_PIN, PIXELS, auto_write=False)  # force manual show
-pixels.brightness = 0.8  # crank it up to be obvious
-
-def wipe(rgb):
+def show(rgb, name):
     pixels.fill((0,0,0))
-    pixels.fill(rgb)
-    pixels.show()
-    print(f"Filled {rgb}")
-    time.sleep(0.6)
+    pixels.fill(rgb); pixels.show()
+    print("fill", name); time.sleep(0.6)
 
-# Solid wipes
-wipe((255, 255, 255))
-wipe((255,   0,   0))
-wipe((  0, 255,   0))
-wipe((  0,   0, 255))
+for c,n in [((255,255,255),"white"),((255,0,0),"red"),((0,255,0),"green"),((0,0,255),"blue")]:
+    show(c,n)
 
-# Chase with explicit show
-for i in range(PIXELS):
-    pixels.fill((0,0,0))
-    pixels[i] = (255, 255, 255)
-    pixels.show()
-    print(f"Pixel {i} ON")
-    time.sleep(0.4)
-
-pixels.fill((0,0,0))
-pixels.show()
-print("Done.")
+pixels.fill((0,0,0)); pixels.show(); print("done")
