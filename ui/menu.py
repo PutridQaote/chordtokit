@@ -72,13 +72,21 @@ class MidiSettingsScreen(Screen):
         self.sel = 0
         # The actual port lists are fetched from the midi adapter lazily in render
 
+    def attach(self, midi_adapter, config):
+        self._midi = midi_adapter
+        self._cfg = config
+
     def _cycle_in(self):
         midi = self._midi
         ins = midi.get_inputs()
         if not ins: return
         cur = midi.get_selected_in()
         idx = (ins.index(cur) + 1) % len(ins) if cur in ins else 0
-        midi.set_in(ins[idx])
+        chosen = ins[idx]
+        midi.set_in(chosen)
+        # persist
+        self._cfg.set("midi_in_name", chosen)
+        self._cfg.save()
 
     def _cycle_out(self):
         midi = self._midi
@@ -86,11 +94,19 @@ class MidiSettingsScreen(Screen):
         if not outs: return
         cur = midi.get_selected_out()
         idx = (outs.index(cur) + 1) % len(outs) if cur in outs else 0
-        midi.set_out(outs[idx])
+        chosen = outs[idx]
+        midi.set_out(chosen)
+        # persist
+        self._cfg.set("midi_out_name", chosen)
+        self._cfg.save()
 
     def _toggle_thru(self):
         midi = self._midi
-        midi.set_thru(not midi.get_thru())
+        new_val = not midi.get_thru()
+        midi.set_thru(new_val)
+        # persist
+        self._cfg.set("midi_thru", new_val)
+        self._cfg.save()
 
     def attach(self, midi_adapter):
         """Called by Menu when this screen becomes active."""
@@ -136,10 +152,11 @@ class MidiSettingsScreen(Screen):
             y += 12
 
 class Menu:
-    def __init__(self, midi_adapter=None):
+    def __init__(self, midi_adapter=None, config=None):
         self._stack: List[Screen] = [HomeScreen()]
         self.dirty = True
         self.midi = midi_adapter
+        self.cfg = config
 
     # Map NeoKey logical indices → UI actions
     def _logical_to_action(self, idx: int) -> Optional[int]:
@@ -155,9 +172,8 @@ class Menu:
         return self._stack[-1]
 
     def push(self, screen: Screen):
-        # dependency injection for screens that need adapters
         if isinstance(screen, MidiSettingsScreen) and self.midi is not None:
-            screen.attach(self.midi)
+            screen.attach(self.midi, self.cfg)
         self._stack.append(screen)
         self.dirty = True
 
