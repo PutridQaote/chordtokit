@@ -38,7 +38,7 @@ OLED_SIZE   = (OLED_WIDTH, OLED_HEIGHT)
 SAGE        = (150, 169, 125)    # soft sage green
 FRAME_HZ    = 30                 # target frame rate for the OLED animation
 SPIRAL_SPEED = 3.33               # higher = faster sweep
-SPIRAL_TURNS = 1               # how many turns to draw at once
+SPIRAL_TURNS = 8.88               # how many turns to draw at once
 
 # ---- Init I2C, OLED, NeoKey ----
 i2c = busio.I2C(board.SCL, board.SDA)
@@ -122,6 +122,16 @@ try:
         # 2) Read keys and update LEDs
         pressed = read_keys_pressed()
         update_key_leds(pressed)
+
+        # 3) Check for edge on pin 4 (index 0) and pin 5 (index 1)
+        if pressed[0] and not prev_pressed[0]:
+            SPIRAL_TURNS += 1
+            print(f"SPIRAL_TURNS increased to {SPIRAL_TURNS}")
+        if pressed[1] and not prev_pressed[1]:
+            SPIRAL_TURNS = max(1, SPIRAL_TURNS - 1)
+            print(f"SPIRAL_TURNS decreased to {SPIRAL_TURNS}")
+
+        prev_pressed = pressed.copy()
 
         # simple frame pacing
         time.sleep(frame_time)
