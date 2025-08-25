@@ -3,14 +3,18 @@ import time, board
 from adafruit_seesaw.seesaw import Seesaw
 from adafruit_seesaw.neopixel import NeoPixel as SSNeoPixel
 
-ADDR      = 0x30
-KEY_PINS  = [4, 5, 6, 7]
-PIXELS    = 4
-DATA_PIN  = 2            # <-- confirmed working on your board
-BRIGHT    = 0.4
+from constants import *
+
+ADDR      = NEOKEY_ADDR
+KEY_PINS  = NEOKEY_KEY_PINS
+PIXELS    = NEOKEY_PIXELS
+DATA_PIN  = NEOKEY_DATA_PIN            # <-- confirmed working on your board
+BRIGHT    = NEOKEY_BRIGHT
 
 class NeoKey:
-    def __init__(self, addr=ADDR, key_pins=KEY_PINS, data_pin=DATA_PIN, pixels=PIXELS, bright=BRIGHT):
+    def __init__(self, addr=NEOKEY_ADDR, key_pins=NEOKEY_KEY_PINS,
+                 data_pin=NEOKEY_DATA_PIN, pixels=NEOKEY_PIXELS, bright=NEOKEY_BRIGHT):
+        
         self.ss = Seesaw(board.I2C(), addr=addr)
         self.key_pins = list(key_pins)
         for p in self.key_pins:

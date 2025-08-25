@@ -9,18 +9,14 @@ import adafruit_ssd1306
 from adafruit_seesaw.seesaw import Seesaw
 from adafruit_seesaw.neopixel import NeoPixel as SSNeoPixel
 
+from constants import *
+
 # ---- Config ----
-OLED_ADDR   = 0x3D
-OLED_SIZE   = (128, 64)          # change to (128,32) if needed
-NEOKEY_ADDR = 0x30
-KEY_PINS    = [4, 5, 6, 7]       # confirmed from your probe
-PIXELS      = 4
-DATA_PIN    = 2                  # confirmed working on your board
-BRIGHTNESS  = 0.5
+OLED_SIZE   = (OLED_WIDTH, OLED_HEIGHT)
 SAGE        = (150, 169, 125)    # soft sage green
 FRAME_HZ    = 30                 # target frame rate for the OLED animation
-SPIRAL_SPEED = 3.5               # higher = faster sweep
-SPIRAL_TURNS = 3.0               # how many turns to draw at once
+SPIRAL_SPEED = 11               # higher = faster sweep
+SPIRAL_TURNS = 2               # how many turns to draw at once
 
 # ---- Init I2C, OLED, NeoKey ----
 i2c = busio.I2C(board.SCL, board.SDA)
@@ -41,17 +37,17 @@ radius = min(W, H) * 0.5 - 2
 
 # NeoKey init
 ss = Seesaw(i2c, addr=NEOKEY_ADDR)
-for p in KEY_PINS:
+for p in NEOKEY_KEY_PINS:
     ss.pin_mode(p, ss.INPUT_PULLUP)
 
-pixels = SSNeoPixel(ss, DATA_PIN, PIXELS, auto_write=False)
-pixels.brightness = BRIGHTNESS
+pixels = SSNeoPixel(ss, NEOKEY_DATA_PIN, NEOKEY_PIXELS, auto_write=False)
+pixels.NEOKEY_BRIGHT = NEOKEY_BRIGHT
 pixels.fill((0, 0, 0)); pixels.show()
 
 # ---- Helpers ----
 def read_keys_pressed():
     # returns [bool x4], True if pressed
-    return [not ss.digital_read(p) for p in KEY_PINS]
+    return [not ss.digital_read(p) for p in NEOKEY_KEY_PINS]
 
 def update_key_leds(pressed):
     for i, p in enumerate(pressed):
@@ -87,7 +83,7 @@ def draw_spiral(t):
         prev = (x, y)
 
 # ---- Main loop ----
-print(f"OLED {W}x{H} @0x{OLED_ADDR:02X}, NeoKey @0x{NEOKEY_ADDR:02X} (data pin {DATA_PIN})")
+print(f"OLED {W}x{H} @0x{OLED_ADDR:02X}, NeoKey @0x{NEOKEY_ADDR:02X} (data pin {NEOKEY_DATA_PIN})")
 print("Press keys to light them sage green. Ctrl+C to exit.")
 
 frame_time = 1.0 / FRAME_HZ
