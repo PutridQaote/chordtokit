@@ -9,9 +9,31 @@ import adafruit_ssd1306
 from adafruit_seesaw.seesaw import Seesaw
 from adafruit_seesaw.neopixel import NeoPixel as SSNeoPixel
 
-from constants import *
+#------------------------//
+# NEOKEY CONSTANTS
+#----------------------//
 
+NEOKEY_ADDR      = 0x30
+NEOKEY_KEY_PINS  = [4, 5, 6, 7]
+NEOKEY_PIXELS    = 4
+NEOKEY_DATA_PIN  = 2            # <-- confirmed working on my board
+NEOKEY_BRIGHT    = 0.4
+
+#------------------------//
+# OLED CONSTANTS
+#----------------------//
+
+OLED_ADDR      = 0x3C
+OLED_WIDTH     = 128
+OLED_HEIGHT    = 64
+OLED_RESET_PIN = 4 # wtf is this
+
+
+
+#------------------------//
 # ---- Config ----
+#----------------------//
+
 OLED_SIZE   = (OLED_WIDTH, OLED_HEIGHT)
 SAGE        = (150, 169, 125)    # soft sage green
 FRAME_HZ    = 30                 # target frame rate for the OLED animation
