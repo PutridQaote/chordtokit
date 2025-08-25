@@ -7,7 +7,7 @@ ADDR      = 0x30
 DATA_PIN  = 3       # confirmed
 PIXELS    = 4
 BRIGHT    = 0.6
-SAGE      = (150, 169, 125)
+SAGE      = (84, 255, 61)
 
 print("Init NeoKey @0x30 …")
 ss = Seesaw(board.I2C(), addr=ADDR)
