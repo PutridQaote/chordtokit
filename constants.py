@@ -21,7 +21,14 @@ NEOKEY_BRIGHT    = 0.4          # not used currently??
 
 DEBOUNCE_MS = 10                # key/footswitch debounce window
 
+
+#------------------------//
+# FOOTSWITCH CONSTANTS
+#----------------------//
+
 FOOTSWITCH_GPIO = 17
+FOOTSWITCH_ACTIVE_LOW = True       # True if pressing shorts to GND (typical)
+FOOTSWITCH_DEBOUNCE_MS = 25
 
 
 #------------------------//
