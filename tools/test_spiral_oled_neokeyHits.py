@@ -37,8 +37,8 @@ OLED_RESET_PIN = 4 # wtf is this
 OLED_SIZE   = (OLED_WIDTH, OLED_HEIGHT)
 SAGE        = (150, 169, 125)    # soft sage green
 FRAME_HZ    = 30                 # target frame rate for the OLED animation
-SPIRAL_SPEED = 11               # higher = faster sweep
-SPIRAL_TURNS = 2               # how many turns to draw at once
+SPIRAL_SPEED = 3.33               # higher = faster sweep
+SPIRAL_TURNS = 1               # how many turns to draw at once
 
 # ---- Init I2C, OLED, NeoKey ----
 i2c = busio.I2C(board.SCL, board.SDA)
