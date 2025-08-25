@@ -6,7 +6,7 @@
 NEOKEY_ADDR      = 0x30
 NEOKEY_KEY_PINS  = [4, 5, 6, 7]
 NEOKEY_PIXELS    = 4
-NEOKEY_DATA_PIN  = 2            # <-- confirmed working on my board
+NEOKEY_DATA_PIN  = 3            # <-- confirmed working on my board
 NEOKEY_BRIGHT    = 0.4
 
 #------------------------//
