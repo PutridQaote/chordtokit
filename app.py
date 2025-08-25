@@ -15,6 +15,7 @@ def main():
     nk = NeoKey()
     oled = Oled()
     midi = Midi()
+    midi.open_ports()
     foot = Footswitch()
     menu = Menu(midi_adapter=midi)
 
