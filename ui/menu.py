@@ -124,8 +124,8 @@ class MidiSettingsScreen(Screen):
         cur_out = midi.get_selected_out() if midi else "-"
         thru = midi.get_thru() if midi else False
         body = [
-            f"Input Port:  {cur_in if cur_in else '-'}",
-            f"Output Port: {cur_out if cur_out else '-'}",
+            f"In Port:  {cur_in if cur_in else '-'}",
+            f"OutPort: {cur_out if cur_out else '-'}",
             f"Thru:        {'On' if thru else 'Off'}",
             "Back",
         ]
