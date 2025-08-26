@@ -14,7 +14,15 @@ from features.chord_capture import ChordCapture
 def main():
     cfg = Config().load()
 
-    nk = NeoKey(brightness=float(cfg.get("neokey_brightness", 0.5)))
+    # Get LED settings from config
+    led_enabled = bool(cfg.get("led_backlights_on", True))
+    led_color = tuple(cfg.get("led_backlight_color", [84, 255, 61]))
+    
+    nk = NeoKey(
+        brightness=float(cfg.get("neokey_brightness", 0.5)),
+        backlight_enabled=led_enabled,
+        backlight_color=led_color
+    )
     oled = Oled()
     midi = Midi(cfg.as_dict()); midi.open_ports()
     foot = Footswitch(active_low=bool(cfg.get("footswitch_active_low", FOOTSWITCH_ACTIVE_LOW)))
@@ -22,7 +30,8 @@ def main():
     allow_dupes = bool(cfg.get("allow_duplicate_notes", False))
     chord_capture = ChordCapture(midi, allow_duplicates=allow_dupes)
 
-    menu = Menu(midi_adapter=midi, config=cfg, chord_capture=chord_capture)
+    # Pass neokey to menu for LED control
+    menu = Menu(midi_adapter=midi, config=cfg, chord_capture=chord_capture, neokey=nk)
 
     # Set chord_capture reference for the home screen
     if hasattr(menu._stack[0], '_chord_capture'):

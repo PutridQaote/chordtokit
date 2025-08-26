@@ -177,15 +177,18 @@ class UtilitiesScreen(Screen):
     def __init__(self):
         self.rows = [
             ("Allow Duplicate Notes", self._toggle_duplicates),
+            ("LED Backlights", self._toggle_leds),
             ("Back", None),
         ]
         self.sel = 0
         self._chord_capture = None
         self._cfg = None
+        self._neokey = None
 
-    def attach(self, chord_capture, config):
+    def attach(self, chord_capture, config, neokey=None):
         self._chord_capture = chord_capture
         self._cfg = config
+        self._neokey = neokey
 
     def _toggle_duplicates(self):
         if self._chord_capture and self._cfg:
@@ -194,6 +197,14 @@ class UtilitiesScreen(Screen):
             self._cfg.set("allow_duplicate_notes", new_val)
             self._cfg.save()
             self._chord_capture.set_allow_duplicates(new_val)
+
+    def _toggle_leds(self):
+        if self._neokey and self._cfg:
+            current = self._cfg.get("led_backlights_on", True)
+            new_val = not current
+            self._cfg.set("led_backlights_on", new_val)
+            self._cfg.save()
+            self._neokey.set_backlight_enabled(new_val)
 
     def on_key(self, key: int) -> ScreenResult:
         if key == BUTTON_UP:
@@ -218,9 +229,11 @@ class UtilitiesScreen(Screen):
         draw.text((4, 2), "Utilities", fill=1)
         
         allow_dupes = self._cfg.get("allow_duplicate_notes", False) if self._cfg else False
+        leds_on = self._cfg.get("led_backlights_on", True) if self._cfg else True
         
         body = [
             f"Duplicates: {'On' if allow_dupes else 'Off'}",
+            f"LEDs: {'On' if leds_on else 'Off'}",
             "Back",
         ]
         y = 14
@@ -361,12 +374,13 @@ class MidiSettingsScreen(Screen):
             y += 12
 
 class Menu:
-    def __init__(self, midi_adapter=None, config=None, chord_capture=None):
+    def __init__(self, midi_adapter=None, config=None, chord_capture=None, neokey=None):
         self._stack: List[Screen] = [HomeScreen()]
         self.dirty = True
         self.midi = midi_adapter
         self.cfg = config
         self.chord_capture = chord_capture
+        self.neokey = neokey
         
         # Set chord_capture reference for the home screen
         if chord_capture and isinstance(self._stack[0], HomeScreen):
@@ -388,8 +402,8 @@ class Menu:
     def push(self, screen: Screen):
         if isinstance(screen, MidiSettingsScreen) and self.midi is not None:
             screen.attach(self.midi, self.cfg)
-        elif isinstance(screen, UtilitiesScreen) and self.chord_capture is not None:
-            screen.attach(self.chord_capture, self.cfg)
+        elif isinstance(screen, UtilitiesScreen):
+            screen.attach(self.chord_capture, self.cfg, self.neokey)
         elif isinstance(screen, HomeScreen) and self.chord_capture:
             screen._chord_capture = self.chord_capture
         self._stack.append(screen)

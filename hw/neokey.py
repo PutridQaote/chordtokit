@@ -19,9 +19,11 @@ class NeoKey:
     - read_events() -> [("press"|"release", logical_index), ...]
     - read_pressed() -> [bool, bool, bool, bool]  (left→right)
     - set_pixel(i, (r,g,b)), fill(rgb), show(), clear()
+    - set_backlight_enabled(bool), set_backlight_color(rgb)
     """
     def __init__(self, addr: int = NEOKEY_ADDR, data_pin: int = NEOKEY_DATA_PIN,
-                 pixels: int = 4, brightness: float = 0.5):
+                 pixels: int = 4, brightness: float = 0.5, 
+                 backlight_enabled: bool = True, backlight_color: tuple = (84, 255, 61)):
         self._ss = Seesaw(board.I2C(), addr=addr)
 
         # Logical order left→right is exactly NEOKEY_KEY_PINS
@@ -36,8 +38,14 @@ class NeoKey:
         self._px = SSNeoPixel(self._ss, data_pin, pixels, auto_write=False)
         self._px.brightness = float(brightness)
 
+        # LED backlight settings
+        self._backlight_enabled = backlight_enabled
+        self._backlight_color = tuple(backlight_color)
+        
+        # Set initial LED state
+        self._update_backlights()
+
         # Debounce state
-        # More aggressive debounce
         self._debounce_s = DEBOUNCE_MS / 1000.0  # 2ms instead of 4ms
         now = time.monotonic()
         self._raw: Dict[int, bool] = {p: True for p in self._logical}    # True = unpressed (HIGH)
@@ -57,6 +65,33 @@ class NeoKey:
     def clear(self):
         self._px.fill((0, 0, 0))
         self._px.show()
+
+    def set_backlight_enabled(self, enabled: bool):
+        """Enable or disable the default backlight."""
+        self._backlight_enabled = enabled
+        self._update_backlights()
+
+    def set_backlight_color(self, rgb: Tuple[int, int, int]):
+        """Set the backlight color."""
+        self._backlight_color = tuple(rgb)
+        if self._backlight_enabled:
+            self._update_backlights()
+
+    def get_backlight_enabled(self) -> bool:
+        """Get current backlight enabled state."""
+        return self._backlight_enabled
+
+    def get_backlight_color(self) -> Tuple[int, int, int]:
+        """Get current backlight color."""
+        return self._backlight_color
+
+    def _update_backlights(self):
+        """Update the backlight LEDs based on current settings."""
+        if self._backlight_enabled:
+            self.fill(self._backlight_color)
+        else:
+            self.fill((0, 0, 0))
+        self.show()
 
     # ------------- Keys -------------
     def _read_pin_level(self, p: int) -> bool:
