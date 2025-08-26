@@ -59,7 +59,11 @@ class ChordCapture:
         
         # Process incoming MIDI messages
         new_notes = []
-        for msg in self.midi.iter_input():
+        all_messages = list(self.midi.iter_input())
+        print(f"ChordCapture.process_midi_input: active={self.active}, got {len(all_messages)} messages")
+        
+        for msg in all_messages:
+            print(f"MIDI message: {msg.type}, note={getattr(msg, 'note', 'N/A')}, vel={getattr(msg, 'velocity', 'N/A')}")
             if msg.type == 'note_on' and msg.velocity > 0:
                 new_notes.append(msg.note)
                 self.last_note_time = now

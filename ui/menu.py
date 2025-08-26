@@ -40,12 +40,19 @@ class ChordCaptureScreen(Screen):
         
     def activate(self):
         """Start chord capture mode."""
+        print(f"ChordCaptureScreen.activate() called")
+        print(f"Activating chord capture screen with chord_capture: {id(self.chord_capture)}")
+        print(f"chord_capture.active before: {self.chord_capture.active}")
         self.active = True
+        self.chord_capture.activate()  # Make sure this calls the ChordCapture.activate()
         self.chord_capture.clear_bucket()
+        print(f"chord_capture.active after: {self.chord_capture.active}")
         
     def deactivate(self):
         """Stop chord capture mode."""
+        print(f"ChordCaptureScreen.deactivate() called")
         self.active = False
+        self.chord_capture.deactivate()  # Make sure this calls the ChordCapture.deactivate()
         self.chord_capture.clear_bucket()
     
     def on_key(self, key: int) -> ScreenResult:
