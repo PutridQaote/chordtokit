@@ -1,5 +1,5 @@
-"""NeoKey 1x4 (Seesaw) wrapper: key reads (debounced) + NeoPixel control.
-"""
+"""NeoKey 1x4 (Seesaw) wrapper: debounced key events + NeoPixel control."""
+from __future__ import annotations
 import time
 from typing import Dict, List, Tuple
 
@@ -15,37 +15,35 @@ from constants import (
 )
 
 class NeoKey:
-    """High-level access to the 1×4 keypad + LEDs.
-
-    - read_pressed(): stable pressed booleans in left→right order (len=4)
-    - read_events():  list of (event, index) edges where index is 0..3 left→right
-    - set_pixel(i, rgb), fill(rgb), show(), clear()
     """
-
-    def __init__(self, addr: int = NEOKEY_ADDR, data_pin: int = NEOKEY_DATA_PIN, pixels: int = 4, brightness: float = 0.5):
+    - read_events() -> [("press"|"release", logical_index), ...]
+    - read_pressed() -> [bool, bool, bool, bool]  (left→right)
+    - set_pixel(i, (r,g,b)), fill(rgb), show(), clear()
+    """
+    def __init__(self, addr: int = NEOKEY_ADDR, data_pin: int = NEOKEY_DATA_PIN,
+                 pixels: int = 4, brightness: float = 0.5):
         self._ss = Seesaw(board.I2C(), addr=addr)
-        # Logical order (left→right) of the keys expressed as Seesaw pin numbers
-        self._logical_order: List[int] = list(NEOKEY_KEY_PINS)
-        # Map physical seesaw pin → logical index left→right
-        self._pin_to_logical: Dict[int, int] = {pin: i for i, pin in enumerate(self._logical_order)}
-        # For configuration & scanning we just iterate the unique set of pins
-        self._phys_pins: List[int] = list(self._pin_to_logical.keys())
 
-        # Configure inputs with pullups
-        for p in self._phys_pins:
+        # Logical order left→right is exactly NEOKEY_KEY_PINS
+        self._logical: List[int] = list(NEOKEY_KEY_PINS)
+        self._pin_to_idx: Dict[int, int] = {pin: i for i, pin in enumerate(self._logical)}
+
+        # Configure key inputs with pull-ups (idle HIGH, pressed LOW)
+        for p in self._logical:
             self._ss.pin_mode(p, self._ss.INPUT_PULLUP)
 
-        # NeoPixels on the seesaw
+        # NeoPixels
         self._px = SSNeoPixel(self._ss, data_pin, pixels, auto_write=False)
-        self._px.brightness = brightness
+        self._px.brightness = float(brightness)
 
         # Debounce state
-        self._raw = {p: True for p in self._phys_pins}            # True == unpressed (pull-up)
-        self._stable = {p: True for p in self._phys_pins}
-        self._last_change = {p: 0.0 for p in self._phys_pins}
         self._debounce_s = DEBOUNCE_MS / 1000.0
+        now = time.monotonic()
+        self._raw: Dict[int, bool] = {p: True for p in self._logical}    # True = unpressed (HIGH)
+        self._stable: Dict[int, bool] = dict(self._raw)
+        self._last_t: Dict[int, float] = {p: now for p in self._logical}
 
-    # -------------------- LEDs --------------------
+    # ------------- LEDs -------------
     def set_pixel(self, idx: int, rgb: Tuple[int, int, int]):
         self._px[idx] = rgb
 
@@ -59,45 +57,40 @@ class NeoKey:
         self._px.fill((0, 0, 0))
         self._px.show()
 
-    # -------------------- Keys --------------------
-    def _read_phys(self, p: int) -> bool:
-        """Return True if unpressed (pull-up HIGH), False if pressed (LOW)."""
-        return bool(self._ss.digital_read(p))
+    # ------------- Keys -------------
+    def _read_pin_level(self, p: int) -> bool:
+        """Return True if HIGH (unpressed), False if LOW (pressed)."""
+        try:
+            return bool(self._ss.digital_read(p))
+        except Exception:
+            # If I2C hiccups, don't invent edges—stick with last raw
+            return self._raw[p]
 
     def read_pressed(self) -> List[bool]:
-        """Stable pressed booleans in left→right order (index 0 == leftmost)."""
-        self._update_debounce()
-        # Convert stable phys to logical order and invert to pressed=True
-        return [not self._stable[pin] for pin in self._logical_order]
+        """Stable pressed booleans (left→right)."""
+        self._scan_debounce()
+        # Invert because stable True == unpressed
+        return [not self._stable[p] for p in self._logical]
 
     def read_events(self) -> List[Tuple[str, int]]:
-        """Edge events since last call. ('press'|'release', logical_index)."""
-        events: List[Tuple[str, int]] = []
-        if self._update_debounce():
-            for pin in self._phys_pins:
-                # Compare stable vs raw already applied in _update_debounce
-                pass
-        # Build from transitions captured during debounce
-        for pin, pending in getattr(self, "_pending_events", []).copy():
-            events.append(pending)
-        self._pending_events = []
-        return events
+        """Return edge events since last call."""
+        return self._scan_debounce()
 
-    def _update_debounce(self) -> bool:
+    def _scan_debounce(self) -> List[Tuple[str, int]]:
         now = time.monotonic()
-        changed = False
-        pending = []
-        for p in self._phys_pins:
-            cur = self._read_phys(p)
+        events: List[Tuple[str, int]] = []
+
+        for p in self._logical:
+            cur = self._read_pin_level(p)
             if cur != self._raw[p]:
+                # raw changed, start/refresh debounce timer
                 self._raw[p] = cur
-                self._last_change[p] = now
-            # If stable long enough, register edge
-            if self._stable[p] != self._raw[p] and (now - self._last_change[p]) >= self._debounce_s:
+                self._last_t[p] = now
+
+            # Has the raw state stayed different long enough?
+            if (self._stable[p] != self._raw[p]) and ((now - self._last_t[p]) >= self._debounce_s):
                 self._stable[p] = self._raw[p]
-                changed = True
-                logical_idx = self._pin_to_logical[p]
-                event = ("release" if self._stable[p] else "press", logical_idx)
-                pending.append((p, event))
-        self._pending_events = [(p, e) for p, e in pending]
-        return changed
+                idx = self._pin_to_idx[p]
+                events.append(("release" if self._stable[p] else "press", idx))
+
+        return events
