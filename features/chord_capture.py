@@ -139,19 +139,20 @@ class ChordCapture:
     def get_bucket_status(self) -> dict:
         """Get current status of note collection."""
         if self.allow_duplicates:
-            # Show all notes in order
-            display_notes = self.bucket
+            # Show all notes in order, but limit to 4 for display
+            display_notes = self.bucket[:4]  # Only show first 4 for corner display
             progress_count = len(self.bucket)
         else:
-            # Show only unique notes
-            display_notes = list(OrderedDict.fromkeys(self.bucket))
-            progress_count = len(display_notes)
-            
+            # Show only unique notes, limit to 4 for display
+            unique_notes = list(OrderedDict.fromkeys(self.bucket))
+            display_notes = unique_notes[:4]  # Only show first 4 for corner display
+            progress_count = len(unique_notes)
+        
         return {
             'notes': display_notes,
             'count': len(self.bucket),
             'unique_count': len(set(self.bucket)),
-            'progress_count': progress_count,  # What to show in progress display
+            'progress_count': progress_count,
             'needs': self.max_notes - progress_count,
             'last_note_age': time.monotonic() - self.last_note_time if self.bucket else 0,
             'allow_duplicates': self.allow_duplicates

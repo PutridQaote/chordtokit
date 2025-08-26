@@ -11,6 +11,8 @@ You can swap in a real OLED wrapper later; for now this isolates UI logic.
 from dataclasses import dataclass
 from typing import List, Optional
 from PIL import Image, ImageDraw, ImageFont
+import math
+import time
 
 BUTTON_LEFT, BUTTON_UP, BUTTON_DOWN, BUTTON_SELECT = 0, 1, 2, 3  # logical left→right indices
 
@@ -37,19 +39,28 @@ class ChordCaptureScreen(Screen):
     def __init__(self, chord_capture):
         self.chord_capture = chord_capture
         self.active = False
+        # Spiral animation state
+        self.start_time = 0.0
+        self.speed = 3.33  # Hard-coded as in test file
+        self.turns = 20   # Hard-coded as in test file
+        # Note display positions (corners)
+        self.note_positions = [
+            (4, 4),      # Top-left
+            (4, 52),     # Bottom-left  
+            (100, 52),   # Bottom-right
+            (100, 4),    # Top-right
+        ]
+        self.completion_time = None  # When 4th note was captured
         
     def activate(self):
         """Start chord capture mode."""
-        # print(f"ChordCaptureScreen.activate() called")
-        # print(f"Activating chord capture screen with chord_capture: {id(self.chord_capture)}")
-        # print(f"chord_capture.active before: {self.chord_capture.active}")
         self.active = True
+        self.start_time = time.monotonic()
+        self.completion_time = None
         self.chord_capture.activate()  # This will clear bucket and flush MIDI
-        # print(f"chord_capture.active after: {self.chord_capture.active}")
         
     def deactivate(self):
         """Stop chord capture mode."""
-        # print(f"ChordCaptureScreen.deactivate() called")
         self.active = False
         self.chord_capture.deactivate()
     
@@ -66,11 +77,42 @@ class ChordCaptureScreen(Screen):
             
         captured_chord = self.chord_capture.process_midi_input()
         if captured_chord:
-            # Chord was captured and sent - exit screen
+            # Chord was captured and sent - start 1 second countdown
+            self.completion_time = time.monotonic()
+            
+        # Check if we should exit after 1 second delay
+        if self.completion_time and (time.monotonic() - self.completion_time) >= 1.0:
             self.deactivate()
             return ScreenResult(pop=True)
             
         return ScreenResult(dirty=True)  # Always dirty to show live updates
+    
+    def _draw_spiral(self, draw, center_x, center_y, max_radius):
+        """Draw animated spiral based on test_spiral_oled_neokeyHits.py"""
+        now = time.monotonic()
+        elapsed = now - self.start_time
+        
+        # Animate the spiral
+        angle_offset = elapsed * self.speed * 2 * math.pi
+        
+        points = []
+        steps = 100  # Number of points to draw
+        
+        for i in range(steps):
+            t = i / steps
+            angle = t * self.turns * 2 * math.pi + angle_offset
+            radius = t * max_radius
+            
+            x = center_x + radius * math.cos(angle)
+            y = center_y + radius * math.sin(angle)
+            points.append((int(x), int(y)))
+        
+        # Draw the spiral as connected line segments
+        for i in range(len(points) - 1):
+            try:
+                draw.line([points[i], points[i + 1]], fill=1, width=1)
+            except:
+                pass  # Skip if points are out of bounds
     
     def render(self, draw: ImageDraw.ImageDraw, w: int, h: int) -> None:
         draw.rectangle((0, 0, w-1, h-1), outline=1, fill=0)
@@ -78,32 +120,32 @@ class ChordCaptureScreen(Screen):
         if not self.active:
             draw.text((4, h//2), "Chord capture inactive", fill=1)
             return
-            
-        # Title
-        title = "Listening for 4 notes..."
-        bbox = draw.textbbox((0, 0), title)
-        title_w = bbox[2] - bbox[0]
-        draw.text(((w - title_w) // 2, 10), title, fill=1)
         
-        # Show current notes
+        # Draw animated spiral in center
+        center_x, center_y = w // 2, h // 2
+        max_radius = min(w, h) // 4  # Adjust size to fit screen
+        self._draw_spiral(draw, center_x, center_y, max_radius)
+        
+        # Show captured notes in corners
         status = self.chord_capture.get_bucket_status()
         notes = status['notes']
         
-        y = 28
-        if notes:
-            # Show the display notes (unique only if duplicates not allowed)
-            note_line = " ".join([f"{note_to_name(note)}({note})" for note in notes[-4:]])
-            draw.text((4, y), note_line, fill=1)
-            y += 12
-            
-        # Progress indicator - use progress_count instead of unique_count
-        progress = f"{status['progress_count']}/4 notes"
-        if not status['allow_duplicates']:
-            progress += " (unique)"
-        draw.text((4, y), progress, fill=1)
+        # Display up to 4 notes in the corner positions
+        for i, note in enumerate(notes[:4]):
+            if i < len(self.note_positions):
+                x, y = self.note_positions[i]
+                note_text = f"{note_to_name(note)}"
+                draw.text((x, y), note_text, fill=1)
         
-        # Instructions
-        draw.text((4, h-24), "LEFT key to cancel", fill=1)
+        # Show completion message if chord was captured
+        if self.completion_time:
+            # Flash "Complete!" message
+            elapsed_since_complete = time.monotonic() - self.completion_time
+            if int(elapsed_since_complete * 4) % 2:  # Blink 4 times per second
+                complete_text = "Complete!"
+                bbox = draw.textbbox((0, 0), complete_text)
+                text_w = bbox[2] - bbox[0]
+                draw.text(((w - text_w) // 2, h - 16), complete_text, fill=1)
 
 
 class UtilitiesScreen(Screen):
