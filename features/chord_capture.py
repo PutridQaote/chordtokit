@@ -1,0 +1,111 @@
+"""Chord capture logic for ChordToKit.
+Collects incoming MIDI notes and builds chords, then sends SysEx to DDTi.
+"""
+from collections import OrderedDict
+from typing import List, Optional
+import time
+
+from features.ddti import DDTi
+
+class ChordCapture:
+    """
+    Captures MIDI note_on messages and builds 4-note chords.
+    When 4 distinct notes are collected, sends SysEx to DDTi via MIDI output.
+    """
+    
+    def __init__(self, midi_adapter, max_notes: int = 4, timeout_seconds: float = 5.0):
+        """
+        Args:
+            midi_adapter: Midi object with iter_input() and send() methods
+            max_notes: Number of notes needed for a complete chord (default 4)
+            timeout_seconds: Clear bucket if no new notes for this long
+        """
+        self.midi = midi_adapter
+        self.max_notes = max_notes
+        self.timeout_seconds = timeout_seconds
+        
+        self.ddti = DDTi()
+        self.bucket: List[int] = []
+        self.last_note_time = 0.0
+        self.active = False
+
+    def activate(self):
+        """Activate chord capture mode."""
+        self.active = True
+        self.clear_bucket()
+        
+    def deactivate(self):
+        """Deactivate chord capture mode."""
+        self.active = False
+        self.clear_bucket()
+
+    def process_midi_input(self) -> Optional[List[int]]:
+        """
+        Process pending MIDI input messages.
+        Returns the chord notes if a complete chord was captured, None otherwise.
+        """
+        # Only process MIDI when active.
+        if not self.active:
+            # Still consume messages to prevent buildup, but don't process them
+            list(self.midi.iter_input())
+            return None
+        
+        now = time.monotonic()
+        
+        # Check for timeout - clear bucket if too much time has passed
+        if self.bucket and (now - self.last_note_time) > self.timeout_seconds:
+            print(f"Chord capture timeout - clearing {len(self.bucket)} notes")
+            self.bucket.clear()
+        
+        # Process incoming MIDI messages
+        new_notes = []
+        for msg in self.midi.iter_input():
+            if msg.type == 'note_on' and msg.velocity > 0:
+                new_notes.append(msg.note)
+                self.last_note_time = now
+        
+        # Add new notes to bucket
+        if new_notes:
+            self.bucket.extend(new_notes)
+            print(f"Added {len(new_notes)} notes, bucket now has {len(self.bucket)} notes")
+        
+        # Check if we have enough notes for a chord
+        if len(self.bucket) >= self.max_notes:
+            # Get unique notes, sorted, take first max_notes
+            chord = sorted(list(OrderedDict.fromkeys(self.bucket)))[:self.max_notes]
+            
+            if len(chord) == self.max_notes:
+                print(f"Captured chord: {chord}")
+                
+                # Send SysEx to DDTi
+                try:
+                    sysex_msg = self.ddti.build_sysex(chord)
+                    self.midi.send(sysex_msg)
+                    print(f"Sent SysEx: {len(sysex_msg.data)} bytes")
+                except Exception as e:
+                    print(f"Error sending SysEx: {e}")
+                
+                # Clear bucket and return the chord
+                self.bucket.clear()
+                return chord
+            else:
+                print(f"Need {self.max_notes} distinct notes; got {len(chord)}: {chord}")
+                # Keep collecting if we don't have enough unique notes
+                
+        return None
+    
+    def clear_bucket(self):
+        """Manually clear the note collection bucket."""
+        if self.bucket:
+            print(f"Manually cleared {len(self.bucket)} notes from bucket")
+        self.bucket.clear()
+        
+    def get_bucket_status(self) -> dict:
+        """Get current status of note collection."""
+        return {
+            'notes': list(self.bucket),
+            'count': len(self.bucket),
+            'unique_count': len(set(self.bucket)),
+            'needs': self.max_notes - len(set(self.bucket)),
+            'last_note_age': time.monotonic() - self.last_note_time if self.bucket else 0
+        }

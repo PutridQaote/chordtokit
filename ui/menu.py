@@ -14,6 +14,13 @@ from PIL import Image, ImageDraw, ImageFont
 
 BUTTON_LEFT, BUTTON_UP, BUTTON_DOWN, BUTTON_SELECT = 0, 1, 2, 3  # logical left→right indices
 
+def note_to_name(midi_note):
+    """Convert MIDI note number to note name like 'F#4'."""
+    note_names = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+    octave = (midi_note // 12) - 1
+    note = note_names[midi_note % 12]
+    return f"{note}{octave}"
+
 @dataclass
 class ScreenResult:
     push: Optional["Screen"] = None
@@ -26,6 +33,70 @@ class Screen:
     def on_key(self, key: int) -> ScreenResult:
         return ScreenResult()
 
+class ChordCaptureScreen(Screen):
+    def __init__(self, chord_capture):
+        self.chord_capture = chord_capture
+        self.active = False
+        
+    def activate(self):
+        """Start chord capture mode."""
+        self.active = True
+        self.chord_capture.clear_bucket()
+        
+    def deactivate(self):
+        """Stop chord capture mode."""
+        self.active = False
+        self.chord_capture.clear_bucket()
+    
+    def on_key(self, key: int) -> ScreenResult:
+        if key == BUTTON_LEFT:  # Back button - abort capture
+            self.deactivate()
+            return ScreenResult(pop=True)
+        return ScreenResult(dirty=False)
+    
+    def update(self) -> ScreenResult:
+        """Check for captured chord. Call this from main loop."""
+        if not self.active:
+            return ScreenResult(dirty=False)
+            
+        captured_chord = self.chord_capture.process_midi_input()
+        if captured_chord:
+            # Chord was captured and sent - exit screen
+            self.deactivate()
+            return ScreenResult(pop=True)
+            
+        return ScreenResult(dirty=True)  # Always dirty to show live updates
+    
+    def render(self, draw: ImageDraw.ImageDraw, w: int, h: int) -> None:
+        draw.rectangle((0, 0, w-1, h-1), outline=1, fill=0)
+        
+        if not self.active:
+            draw.text((4, h//2), "Chord capture inactive", fill=1)
+            return
+            
+        # Title
+        title = "Listening for 4 notes..."
+        bbox = draw.textbbox((0, 0), title)
+        title_w = bbox[2] - bbox[0]
+        draw.text(((w - title_w) // 2, 10), title, fill=1)
+        
+        # Show current notes
+        status = self.chord_capture.get_bucket_status()
+        notes = status['notes']
+        
+        y = 28
+        if notes:
+            note_line = " ".join([f"{note_to_name(note)}({note})" for note in notes[-4:]])
+            draw.text((4, y), note_line, fill=1)
+            y += 12
+            
+        # Progress indicator
+        progress = f"{len(set(notes))}/4 unique notes"
+        draw.text((4, y), progress, fill=1)
+        
+        # Instructions
+        draw.text((4, h-24), "LEFT key to cancel", fill=1)
+
 class HomeScreen(Screen):
     def __init__(self):
         self.items = [
@@ -35,6 +106,7 @@ class HomeScreen(Screen):
             "About",
         ]
         self.sel = 0
+        self._chord_capture = None  # Will be set by Menu
 
     def on_key(self, key: int) -> ScreenResult:
         if key == BUTTON_UP:
@@ -47,6 +119,12 @@ class HomeScreen(Screen):
             label = self.items[self.sel]
             if label == "MIDI Settings":
                 return ScreenResult(push=MidiSettingsScreen(), dirty=True)
+            elif label == "Capture 4 Notes (footswitch)":
+                # Create and activate chord capture screen
+                if self._chord_capture:
+                    screen = ChordCaptureScreen(self._chord_capture)
+                    screen.activate()
+                    return ScreenResult(push=screen, dirty=True)
             # Other screens can be added similarly
             return ScreenResult(dirty=False)
         return ScreenResult(dirty=False)
@@ -148,11 +226,16 @@ class MidiSettingsScreen(Screen):
             y += 12
 
 class Menu:
-    def __init__(self, midi_adapter=None, config=None):
+    def __init__(self, midi_adapter=None, config=None, chord_capture=None):
         self._stack: List[Screen] = [HomeScreen()]
         self.dirty = True
         self.midi = midi_adapter
         self.cfg = config
+        self.chord_capture = chord_capture
+        
+        # Set chord_capture reference for the home screen
+        if chord_capture and isinstance(self._stack[0], HomeScreen):
+            self._stack[0]._chord_capture = chord_capture
 
     # Map NeoKey logical indices → UI actions
     def _logical_to_action(self, idx: int) -> Optional[int]:
@@ -170,6 +253,8 @@ class Menu:
     def push(self, screen: Screen):
         if isinstance(screen, MidiSettingsScreen) and self.midi is not None:
             screen.attach(self.midi, self.cfg)
+        elif isinstance(screen, HomeScreen) and self.chord_capture:
+            screen._chord_capture = self.chord_capture
         self._stack.append(screen)
         self.dirty = True
 
@@ -177,6 +262,18 @@ class Menu:
         if len(self._stack) > 1:
             self._stack.pop()
             self.dirty = True
+
+    def update(self) -> bool:
+        """Update active screen and return True if screen changed."""
+        top = self._top()
+        if isinstance(top, ChordCaptureScreen):
+            result = top.update()
+            if result.pop:
+                self.pop()
+                return True
+            if result.dirty:
+                self.dirty = True
+        return False
 
     def handle_events(self, key_events: List[tuple]):
         """Consume NeoKey events [('press'|'release', idx), ...]."""

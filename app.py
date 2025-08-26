@@ -1,14 +1,15 @@
 # app.py
 import time
+
 from config import Config
 from constants import FOOTSWITCH_ACTIVE_LOW
 from hw.neokey import NeoKey
 from hw.oled import Oled
 from hw.midi_io import Midi
 from hw.footswitch import Footswitch
-from ui.menu import Menu
+from ui.menu import Menu, ChordCaptureScreen
+from features.chord_capture import ChordCapture
 
-TOAST_SECS = 1.2
 
 def main():
     cfg = Config().load()
@@ -16,13 +17,13 @@ def main():
     nk = NeoKey(brightness=float(cfg.get("neokey_brightness", 0.5)))
     oled = Oled()
     midi = Midi(cfg.as_dict()); midi.open_ports()
-
-    # Allow runtime override from config
     foot = Footswitch(active_low=bool(cfg.get("footswitch_active_low", FOOTSWITCH_ACTIVE_LOW)))
+    chord_capture = ChordCapture(midi)
+    menu = Menu(midi_adapter=midi, config=cfg, chord_capture=chord_capture)
 
-    menu = Menu(midi_adapter=midi, config=cfg)
-
-    toast_until = 0.0
+    # Set chord_capture reference for the home screen
+    if hasattr(menu._stack[0], '_chord_capture'):
+        menu._stack[0]._chord_capture = chord_capture
 
     img, draw = oled.begin_frame()
     menu.render_into(draw, oled.width, oled.height)
@@ -35,8 +36,23 @@ def main():
             if events:
                 menu.handle_events(events)
 
-            # Add this missing section to re-render when menu is dirty
-            if menu.dirty:
+            # Handle footswitch
+            if foot.pressed_edge():
+                top_screen = menu._top()
+                if isinstance(top_screen, ChordCaptureScreen):
+                    # If already in capture mode, abort it
+                    top_screen.deactivate()
+                    menu.pop()
+                else:
+                    # Start chord capture
+                    capture_screen = ChordCaptureScreen(chord_capture)
+                    capture_screen.activate()
+                    menu.push(capture_screen)
+
+            # Update current screen (important for ChordCaptureScreen)
+            screen_changed = menu.update()
+            
+            if menu.dirty or screen_changed:
                 img, draw = oled.begin_frame()
                 menu.render_into(draw, oled.width, oled.height)
                 oled.show(img)
