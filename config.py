@@ -18,6 +18,7 @@ DEFAULTS: Dict[str, Any] = {
     "neokey_brightness": 0.5,
     "led_backlights_on": True,
     "octave_down_lowest": False,
+    "allow_duplicate_notes": False,
 
     # Footswitch (so you can flip NO/NC without editing code)
     "footswitch_active_low": True,

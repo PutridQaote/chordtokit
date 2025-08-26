@@ -18,7 +18,10 @@ def main():
     oled = Oled()
     midi = Midi(cfg.as_dict()); midi.open_ports()
     foot = Footswitch(active_low=bool(cfg.get("footswitch_active_low", FOOTSWITCH_ACTIVE_LOW)))
-    chord_capture = ChordCapture(midi)
+
+    allow_dupes = bool(cfg.get("allow_duplicate_notes", False))
+    chord_capture = ChordCapture(midi, allow_duplicates=allow_dupes)
+    
     menu = Menu(midi_adapter=midi, config=cfg, chord_capture=chord_capture)
 
     # Set chord_capture reference for the home screen

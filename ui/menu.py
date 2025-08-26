@@ -40,17 +40,17 @@ class ChordCaptureScreen(Screen):
         
     def activate(self):
         """Start chord capture mode."""
-        print(f"ChordCaptureScreen.activate() called")
-        print(f"Activating chord capture screen with chord_capture: {id(self.chord_capture)}")
-        print(f"chord_capture.active before: {self.chord_capture.active}")
+        # print(f"ChordCaptureScreen.activate() called")
+        # print(f"Activating chord capture screen with chord_capture: {id(self.chord_capture)}")
+        # print(f"chord_capture.active before: {self.chord_capture.active}")
         self.active = True
         self.chord_capture.activate()  # Make sure this calls the ChordCapture.activate()
         self.chord_capture.clear_bucket()
-        print(f"chord_capture.active after: {self.chord_capture.active}")
+        # print(f"chord_capture.active after: {self.chord_capture.active}")
         
     def deactivate(self):
         """Stop chord capture mode."""
-        print(f"ChordCaptureScreen.deactivate() called")
+        # print(f"ChordCaptureScreen.deactivate() called")
         self.active = False
         self.chord_capture.deactivate()  # Make sure this calls the ChordCapture.deactivate()
         self.chord_capture.clear_bucket()
@@ -93,16 +93,76 @@ class ChordCaptureScreen(Screen):
         
         y = 28
         if notes:
+            # Show the display notes (unique only if duplicates not allowed)
             note_line = " ".join([f"{note_to_name(note)}({note})" for note in notes[-4:]])
             draw.text((4, y), note_line, fill=1)
             y += 12
             
-        # Progress indicator
-        progress = f"{len(set(notes))}/4 unique notes"
+        # Progress indicator - use progress_count instead of unique_count
+        progress = f"{status['progress_count']}/4 notes"
+        if not status['allow_duplicates']:
+            progress += " (unique)"
         draw.text((4, y), progress, fill=1)
         
         # Instructions
         draw.text((4, h-24), "LEFT key to cancel", fill=1)
+
+
+class UtilitiesScreen(Screen):
+    def __init__(self):
+        self.rows = [
+            ("Allow Duplicate Notes", self._toggle_duplicates),
+            ("Back", None),
+        ]
+        self.sel = 0
+        self._chord_capture = None
+        self._cfg = None
+
+    def attach(self, chord_capture, config):
+        self._chord_capture = chord_capture
+        self._cfg = config
+
+    def _toggle_duplicates(self):
+        if self._chord_capture and self._cfg:
+            current = self._cfg.get("allow_duplicate_notes", False)
+            new_val = not current
+            self._cfg.set("allow_duplicate_notes", new_val)
+            self._cfg.save()
+            self._chord_capture.set_allow_duplicates(new_val)
+
+    def on_key(self, key: int) -> ScreenResult:
+        if key == BUTTON_UP:
+            self.sel = (self.sel - 1) % len(self.rows)
+            return ScreenResult(dirty=True)
+        if key == BUTTON_DOWN:
+            self.sel = (self.sel + 1) % len(self.rows)
+            return ScreenResult(dirty=True)
+        if key == BUTTON_SELECT:
+            label, action = self.rows[self.sel]
+            if label == "Back":
+                return ScreenResult(pop=True)
+            if action:
+                action()
+                return ScreenResult(dirty=True)
+        if key == BUTTON_LEFT:
+            return ScreenResult(pop=True)
+        return ScreenResult(dirty=False)
+
+    def render(self, draw: ImageDraw.ImageDraw, w: int, h: int) -> None:
+        draw.rectangle((0,0,w-1,h-1), outline=1, fill=0)
+        draw.text((4, 2), "Utilities", fill=1)
+        
+        allow_dupes = self._cfg.get("allow_duplicate_notes", False) if self._cfg else False
+        
+        body = [
+            f"Duplicates: {'On' if allow_dupes else 'Off'}",
+            "Back",
+        ]
+        y = 14
+        for i, line in enumerate(body):
+            prefix = "> " if i == self.sel else "  "
+            draw.text((4, y), prefix + line, fill=1)
+            y += 12
 
 class HomeScreen(Screen):
     def __init__(self):
@@ -132,6 +192,8 @@ class HomeScreen(Screen):
                     screen = ChordCaptureScreen(self._chord_capture)
                     screen.activate()
                     return ScreenResult(push=screen, dirty=True)
+            elif label == "Utilities":
+                return ScreenResult(push=UtilitiesScreen(), dirty=True)
             # Other screens can be added similarly
             return ScreenResult(dirty=False)
         return ScreenResult(dirty=False)
@@ -260,6 +322,8 @@ class Menu:
     def push(self, screen: Screen):
         if isinstance(screen, MidiSettingsScreen) and self.midi is not None:
             screen.attach(self.midi, self.cfg)
+        elif isinstance(screen, UtilitiesScreen) and self.chord_capture is not None:
+            screen.attach(self.chord_capture, self.cfg)
         elif isinstance(screen, HomeScreen) and self.chord_capture:
             screen._chord_capture = self.chord_capture
         self._stack.append(screen)

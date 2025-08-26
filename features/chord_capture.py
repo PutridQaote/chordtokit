@@ -13,21 +13,28 @@ class ChordCapture:
     When 4 distinct notes are collected, sends SysEx to DDTi via MIDI output.
     """
     
-    def __init__(self, midi_adapter, max_notes: int = 4, timeout_seconds: float = 5.0):
+    def __init__(self, midi_adapter, max_notes: int = 4, timeout_seconds: float = 5.0, allow_duplicates: bool = False):
         """
         Args:
             midi_adapter: Midi object with iter_input() and send() methods
             max_notes: Number of notes needed for a complete chord (default 4)
             timeout_seconds: Clear bucket if no new notes for this long
+            allow_duplicates: If True, allow duplicate notes in chord
         """
         self.midi = midi_adapter
         self.max_notes = max_notes
         self.timeout_seconds = timeout_seconds
+        self.allow_duplicates = allow_duplicates
         
         self.ddti = DDTi()
         self.bucket: List[int] = []
         self.last_note_time = 0.0
         self.active = False
+
+    def set_allow_duplicates(self, allow: bool):
+        """Change duplicate policy and clear bucket."""
+        self.allow_duplicates = allow
+        self.clear_bucket()
 
     def activate(self):
         """Activate chord capture mode."""
@@ -63,10 +70,16 @@ class ChordCapture:
         print(f"ChordCapture.process_midi_input: active={self.active}, got {len(all_messages)} messages")
         
         for msg in all_messages:
-            print(f"MIDI message: {msg.type}, note={getattr(msg, 'note', 'N/A')}, vel={getattr(msg, 'velocity', 'N/A')}")
             if msg.type == 'note_on' and msg.velocity > 0:
-                new_notes.append(msg.note)
-                self.last_note_time = now
+                if self.allow_duplicates:
+                    # Always add new notes
+                    new_notes.append(msg.note)
+                    self.last_note_time = now
+                else:
+                    # Only add if not already in bucket (avoid duplicates)
+                    if msg.note not in self.bucket:
+                        new_notes.append(msg.note)
+                        self.last_note_time = now
         
         # Add new notes to bucket
         if new_notes:
@@ -75,8 +88,12 @@ class ChordCapture:
         
         # Check if we have enough notes for a chord
         if len(self.bucket) >= self.max_notes:
-            # Get unique notes, sorted, take first max_notes
-            chord = sorted(list(OrderedDict.fromkeys(self.bucket)))[:self.max_notes]
+            if self.allow_duplicates:
+                # Take first max_notes notes as-is
+                chord = self.bucket[:self.max_notes]
+            else:
+                # Get unique notes, sorted, take first max_notes
+                chord = sorted(list(OrderedDict.fromkeys(self.bucket)))[:self.max_notes]
             
             if len(chord) == self.max_notes:
                 print(f"Captured chord: {chord}")
@@ -92,7 +109,7 @@ class ChordCapture:
                 # Clear bucket and return the chord
                 self.bucket.clear()
                 return chord
-            else:
+            elif not self.allow_duplicates:
                 print(f"Need {self.max_notes} distinct notes; got {len(chord)}: {chord}")
                 # Keep collecting if we don't have enough unique notes
                 
@@ -106,10 +123,21 @@ class ChordCapture:
         
     def get_bucket_status(self) -> dict:
         """Get current status of note collection."""
+        if self.allow_duplicates:
+            # Show all notes in order
+            display_notes = self.bucket
+            progress_count = len(self.bucket)
+        else:
+            # Show only unique notes
+            display_notes = list(OrderedDict.fromkeys(self.bucket))
+            progress_count = len(display_notes)
+            
         return {
-            'notes': list(self.bucket),
+            'notes': display_notes,
             'count': len(self.bucket),
             'unique_count': len(set(self.bucket)),
-            'needs': self.max_notes - len(set(self.bucket)),
-            'last_note_age': time.monotonic() - self.last_note_time if self.bucket else 0
+            'progress_count': progress_count,  # What to show in progress display
+            'needs': self.max_notes - progress_count,
+            'last_note_age': time.monotonic() - self.last_note_time if self.bucket else 0,
+            'allow_duplicates': self.allow_duplicates
         }
