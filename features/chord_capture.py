@@ -82,7 +82,7 @@ class ChordCapture:
         # Process incoming MIDI messages
         new_notes = []
         all_messages = list(self.midi.iter_input())
-        print(f"ChordCapture.process_midi_input: active={self.active}, got {len(all_messages)} messages")
+        # print(f"ChordCapture.process_midi_input: active={self.active}, got {len(all_messages)} messages")
         
         for msg in all_messages:
             if msg.type == 'note_on' and msg.velocity > 0:

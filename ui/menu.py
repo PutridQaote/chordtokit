@@ -120,38 +120,41 @@ class ChordCaptureScreen(Screen):
         # Clear screen with border - SAME as test file
         draw.rectangle((0, 0, w-1, h-1), outline=0, fill=0)
         draw.rectangle((0, 0, w-1, h-1), outline=1, fill=0)  # subtle frame border
-        
+    
         if not self.active:
             draw.text((4, h//2), "Chord capture inactive", fill=1)
             return
-        
+    
         # Calculate time elapsed since start
         t = time.monotonic() - self.start_time
-        
+    
         # Draw animated spiral with EXACT same parameters as test
         self._draw_spiral(draw, w, h, t)
-        
+    
         # Show captured notes in corners
         status = self.chord_capture.get_bucket_status()
         notes = status['notes']
-        
+    
         # Display up to 4 notes in the corner positions
         for i, note in enumerate(notes[:4]):
             if i < len(self.note_positions):
                 x, y = self.note_positions[i]
                 note_text = f"{note_to_name(note)}"
                 draw.text((x, y), note_text, fill=1)
+    
+        # Show "listen" in negative (black) pixels if we haven't captured 4 notes yet
+        if not self.completion_time:  # Only show "listen" before completion
+            listen_text = "listen"
+            bbox = draw.textbbox((0, 0), listen_text)
+            text_w = bbox[2] - bbox[0]
+            text_h = bbox[3] - bbox[1]
         
-        # Show completion message if chord was captured
-        if self.completion_time:
-            # Flash "Complete!" message
-            elapsed_since_complete = time.monotonic() - self.completion_time
-            if int(elapsed_since_complete * 4) % 2:  # Blink 4 times per second
-                complete_text = "Complete!"
-                bbox = draw.textbbox((0, 0), complete_text)
-                text_w = bbox[2] - bbox[0]
-                draw.text(((w - text_w) // 2, h - 16), complete_text, fill=1)
-
+            # Center the text
+            text_x = (w - text_w) // 2
+            text_y = (h - text_h) // 2
+        
+            # Draw "listen" in black (fill=0) over the spiral
+            draw.text((text_x, text_y), listen_text, fill=0)
 
 class UtilitiesScreen(Screen):
     def __init__(self):
