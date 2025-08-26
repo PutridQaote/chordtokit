@@ -144,7 +144,7 @@ class ChordCaptureScreen(Screen):
     
         # Show "listen" in negative (black) pixels if we haven't captured 4 notes yet
         if not self.completion_time:  # Only show "listen" before completion
-            listen_text = "LISTEN"
+            listen_text = "listen"
             bbox = draw.textbbox((0, 0), listen_text)
             text_w = bbox[2] - bbox[0]
             text_h = bbox[3] - bbox[1]
@@ -153,8 +153,22 @@ class ChordCaptureScreen(Screen):
             text_x = (w - text_w) // 2
             text_y = (h - text_h) // 2
         
-            # Draw "listen" in black (fill=0) over the spiral
-            draw.text((text_x, text_y), listen_text, fill=0)
+            # Draw "listen" in black (fill=0) multiple times with offsets to make it bold
+            offsets = [
+                (0, 0),    # original position
+                (1, 0),    # right
+                (0, 1),    # down
+                (1, 1),    # diagonal
+                (-1, 0),   # left
+                (0, -1),   # up
+                (-1, -1),  # diagonal up-left
+                (1, -1),   # diagonal up-right
+                (-1, 1),   # diagonal down-left
+            ]
+            
+            for dx, dy in offsets:
+                draw.text((text_x + dx, text_y + dy), listen_text, fill=0)
+
 
 class UtilitiesScreen(Screen):
     def __init__(self):
