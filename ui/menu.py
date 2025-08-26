@@ -39,10 +39,10 @@ class ChordCaptureScreen(Screen):
     def __init__(self, chord_capture):
         self.chord_capture = chord_capture
         self.active = False
-        # Spiral animation state
+        # Spiral animation state - EXACT values from test file
         self.start_time = 0.0
-        self.speed = 3.33  # Hard-coded as in test file
-        self.turns = 20   # Hard-coded as in test file
+        self.speed = 3.33  # SPIRAL_SPEED from test file
+        self.turns = 20    # SPIRAL_TURNS from test file
         # Note display positions (corners)
         self.note_positions = [
             (4, 4),      # Top-left
@@ -87,44 +87,49 @@ class ChordCaptureScreen(Screen):
             
         return ScreenResult(dirty=True)  # Always dirty to show live updates
     
-    def _draw_spiral(self, draw, center_x, center_y, max_radius):
-        """Draw animated spiral based on test_spiral_oled_neokeyHits.py"""
-        now = time.monotonic()
-        elapsed = now - self.start_time
+    def _draw_spiral(self, draw, w, h, t):
+        """Draw animated spiral EXACTLY like test_spiral_oled_neokeyHits.py"""
+        cx, cy = w // 2, h // 2
+        radius = min(w, h) * 0.5 - 2  # Same calculation as test file
         
-        # Animate the spiral
-        angle_offset = elapsed * self.speed * 2 * math.pi
+        # Archimedean spiral r = a + b*theta, animated by phase t
+        turns = self.turns
+        theta_max = 2 * math.pi * turns
+        a = 0.0
+        b = radius / theta_max  # so it fits nicely
         
-        points = []
-        steps = 100  # Number of points to draw
+        # phase offset to animate - EXACT same calculation as test
+        phase = t * self.speed
         
-        for i in range(steps):
-            t = i / steps
-            angle = t * self.turns * 2 * math.pi + angle_offset
-            radius = t * max_radius
-            
-            x = center_x + radius * math.cos(angle)
-            y = center_y + radius * math.sin(angle)
-            points.append((int(x), int(y)))
-        
-        # Draw the spiral as connected line segments
-        for i in range(len(points) - 1):
-            try:
-                draw.line([points[i], points[i + 1]], fill=1, width=1)
-            except:
-                pass  # Skip if points are out of bounds
+        # draw the spiral as connected short segments - SAME as test
+        step = 0.03
+        prev = None
+        for k in range(int(theta_max / step) + 1):
+            theta = k * step + phase
+            r = a + b * (k * step)  # Same formula as test
+            x = int(cx + r * math.cos(theta))
+            y = int(cy + r * math.sin(theta))
+            if prev is not None:
+                try:
+                    draw.line((prev[0], prev[1], x, y), fill=1)
+                except:
+                    pass  # Skip if out of bounds
+            prev = (x, y)
     
     def render(self, draw: ImageDraw.ImageDraw, w: int, h: int) -> None:
-        draw.rectangle((0, 0, w-1, h-1), outline=1, fill=0)
+        # Clear screen with border - SAME as test file
+        draw.rectangle((0, 0, w-1, h-1), outline=0, fill=0)
+        draw.rectangle((0, 0, w-1, h-1), outline=1, fill=0)  # subtle frame border
         
         if not self.active:
             draw.text((4, h//2), "Chord capture inactive", fill=1)
             return
         
-        # Draw animated spiral in center
-        center_x, center_y = w // 2, h // 2
-        max_radius = min(w, h) // 4  # Adjust size to fit screen
-        self._draw_spiral(draw, center_x, center_y, max_radius)
+        # Calculate time elapsed since start
+        t = time.monotonic() - self.start_time
+        
+        # Draw animated spiral with EXACT same parameters as test
+        self._draw_spiral(draw, w, h, t)
         
         # Show captured notes in corners
         status = self.chord_capture.get_bucket_status()
