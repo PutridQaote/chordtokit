@@ -51,17 +51,20 @@ class ChordCaptureScreen(Screen):
             (100, 4),    # Top-right
         ]
         self.completion_time = None  # When 4th note was captured
+        self.captured_notes = []     # Store notes during completion delay
         
     def activate(self):
         """Start chord capture mode."""
         self.active = True
         self.start_time = time.monotonic()
         self.completion_time = None
+        self.captured_notes = []
         self.chord_capture.activate()  # This will clear bucket and flush MIDI
         
     def deactivate(self):
         """Stop chord capture mode."""
         self.active = False
+        self.captured_notes = []
         self.chord_capture.deactivate()
     
     def on_key(self, key: int) -> ScreenResult:
@@ -77,7 +80,8 @@ class ChordCaptureScreen(Screen):
             
         captured_chord = self.chord_capture.process_midi_input()
         if captured_chord:
-            # Chord was captured and sent - start 1 second countdown
+            # Chord was captured and sent - store notes and start 1 second countdown
+            self.captured_notes = captured_chord[:]  # Store a copy
             self.completion_time = time.monotonic()
             
         # Check if we should exit after 1 second delay
@@ -132,8 +136,13 @@ class ChordCaptureScreen(Screen):
         self._draw_spiral(draw, w, h, t)
     
         # Show captured notes in corners
-        status = self.chord_capture.get_bucket_status()
-        notes = status['notes']
+        if self.completion_time:
+            # During completion delay, show the captured notes
+            notes = self.captured_notes
+        else:
+            # During capture, show current bucket status
+            status = self.chord_capture.get_bucket_status()
+            notes = status['notes']
     
         # Display up to 4 notes in the corner positions
         for i, note in enumerate(notes[:4]):
@@ -163,8 +172,6 @@ class ChordCaptureScreen(Screen):
             
             for dx, dy in offsets:
                 draw.text((text_x + dx, text_y + dy), listen_text, fill=0)
-
-
 
 class UtilitiesScreen(Screen):
     def __init__(self):
