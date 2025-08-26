@@ -153,21 +153,17 @@ class ChordCaptureScreen(Screen):
             text_x = (w - text_w) // 2
             text_y = (h - text_h) // 2
         
-            # Draw "listen" in black (fill=0) multiple times with offsets to make it bold
+            # Draw "listen" in black (fill=0) with just a few offsets for bold effect
             offsets = [
                 (0, 0),    # original position
                 (1, 0),    # right
                 (0, 1),    # down
                 (1, 1),    # diagonal
-                (-1, 0),   # left
-                (0, -1),   # up
-                (-1, -1),  # diagonal up-left
-                (1, -1),   # diagonal up-right
-                (-1, 1),   # diagonal down-left
             ]
             
             for dx, dy in offsets:
                 draw.text((text_x + dx, text_y + dy), listen_text, fill=0)
+
 
 
 class UtilitiesScreen(Screen):
