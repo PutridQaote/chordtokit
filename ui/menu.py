@@ -144,7 +144,7 @@ class ChordCaptureScreen(Screen):
     
         # Show "listen" in negative (black) pixels if we haven't captured 4 notes yet
         if not self.completion_time:  # Only show "listen" before completion
-            listen_text = "listen"
+            listen_text = "LISTEN"
             bbox = draw.textbbox((0, 0), listen_text)
             text_w = bbox[2] - bbox[0]
             text_h = bbox[3] - bbox[1]
