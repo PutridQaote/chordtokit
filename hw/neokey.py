@@ -37,7 +37,8 @@ class NeoKey:
         self._px.brightness = float(brightness)
 
         # Debounce state
-        self._debounce_s = DEBOUNCE_MS / 1000.0
+        # More aggressive debounce
+        self._debounce_s = 2 / 1000.0  # 2ms instead of 4ms
         now = time.monotonic()
         self._raw: Dict[int, bool] = {p: True for p in self._logical}    # True = unpressed (HIGH)
         self._stable: Dict[int, bool] = dict(self._raw)
@@ -87,7 +88,7 @@ class NeoKey:
                 self._raw[p] = cur
                 self._last_t[p] = now
                 # Uncomment for debugging:
-                # print(f"Pin {p} raw change: {cur}")
+                print(f"Pin {p} raw change: {cur} at {now:.6f}")
 
             # Has the raw state stayed different long enough?
             if (self._stable[p] != self._raw[p]) and ((now - self._last_t[p]) >= self._debounce_s):
@@ -95,7 +96,7 @@ class NeoKey:
                 idx = self._pin_to_idx[p]
                 event_type = "release" if self._stable[p] else "press"
                 events.append((event_type, idx))
-                # Uncomment for debugging:
-                print(f"Pin {p} -> {event_type} (idx {idx}) after {(now - self._last_t[p])*1000:.1f}ms")
+                # Better precision debugging:
+                print(f"Pin {p} -> {event_type} (idx {idx}) after {(now - self._last_t[p])*1000:.3f}ms")
 
         return events

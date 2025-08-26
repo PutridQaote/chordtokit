@@ -63,7 +63,7 @@ def main():
                 oled.show(img)
                 menu.dirty = False
 
-            time.sleep(0.01)
+            time.sleep(0.001)  # Much faster polling - 1ms instead of 10ms
     except KeyboardInterrupt:
         pass
 
