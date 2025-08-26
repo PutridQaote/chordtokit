@@ -86,11 +86,16 @@ class NeoKey:
                 # raw changed, start/refresh debounce timer
                 self._raw[p] = cur
                 self._last_t[p] = now
+                # Uncomment for debugging:
+                # print(f"Pin {p} raw change: {cur}")
 
             # Has the raw state stayed different long enough?
             if (self._stable[p] != self._raw[p]) and ((now - self._last_t[p]) >= self._debounce_s):
                 self._stable[p] = self._raw[p]
                 idx = self._pin_to_idx[p]
-                events.append(("release" if self._stable[p] else "press", idx))
+                event_type = "release" if self._stable[p] else "press"
+                events.append((event_type, idx))
+                # Uncomment for debugging:
+                # print(f"Pin {p} -> {event_type} (idx {idx}) after {(now - self._last_t[p])*1000:.1f}ms")
 
         return events
