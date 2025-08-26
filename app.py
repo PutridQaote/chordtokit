@@ -35,7 +35,13 @@ def main():
             if events:
                 menu.handle_events(events)
 
-            # (Your footswitch toast here as before)
+            # Add this missing section to re-render when menu is dirty
+            if menu.dirty:
+                img, draw = oled.begin_frame()
+                menu.render_into(draw, oled.width, oled.height)
+                oled.show(img)
+                menu.dirty = False
+
             time.sleep(0.01)
     except KeyboardInterrupt:
         pass

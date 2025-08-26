@@ -108,10 +108,6 @@ class MidiSettingsScreen(Screen):
         self._cfg.set("midi_thru", new_val)
         self._cfg.save()
 
-    def attach(self, midi_adapter):
-        """Called by Menu when this screen becomes active."""
-        self._midi = midi_adapter
-
     def on_key(self, key: int) -> ScreenResult:
         if key == BUTTON_UP:
             self.sel = (self.sel - 1) % len(self.rows)
