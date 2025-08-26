@@ -21,7 +21,7 @@ def main():
 
     allow_dupes = bool(cfg.get("allow_duplicate_notes", False))
     chord_capture = ChordCapture(midi, allow_duplicates=allow_dupes)
-    
+
     menu = Menu(midi_adapter=midi, config=cfg, chord_capture=chord_capture)
 
     # Set chord_capture reference for the home screen
@@ -44,10 +44,12 @@ def main():
                 top_screen = menu._top()
                 if isinstance(top_screen, ChordCaptureScreen):
                     # If already in capture mode, abort it
+                    print("Footswitch: Aborting chord capture")
                     top_screen.deactivate()
                     menu.pop()
                 else:
-                    # Start chord capture
+                    # Start chord capture - ensure we start fresh
+                    print("Footswitch: Starting chord capture")
                     capture_screen = ChordCaptureScreen(chord_capture)
                     capture_screen.activate()
                     menu.push(capture_screen)

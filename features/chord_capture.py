@@ -41,10 +41,25 @@ class ChordCapture:
         self.active = True
         self.clear_bucket()
         
+        # Flush any pending MIDI messages to start with a clean slate
+        flushed_messages = list(self.midi.iter_input())
+        if flushed_messages:
+            print(f"Flushed {len(flushed_messages)} stale MIDI messages")
+        
+        # Reset timing
+        self.last_note_time = 0.0
+        
     def deactivate(self):
         """Deactivate chord capture mode."""
+        print("ChordCapture.deactivate() - clearing bucket and flushing MIDI input")
         self.active = False
         self.clear_bucket()
+        
+        # Also flush on deactivate to prevent messages from accumulating
+        flushed_messages = list(self.midi.iter_input())
+        if flushed_messages:
+            print(f"Flushed {len(flushed_messages)} stale MIDI messages on deactivate")
+
 
     def process_midi_input(self) -> Optional[List[int]]:
         """

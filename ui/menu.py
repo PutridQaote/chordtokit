@@ -44,16 +44,14 @@ class ChordCaptureScreen(Screen):
         # print(f"Activating chord capture screen with chord_capture: {id(self.chord_capture)}")
         # print(f"chord_capture.active before: {self.chord_capture.active}")
         self.active = True
-        self.chord_capture.activate()  # Make sure this calls the ChordCapture.activate()
-        self.chord_capture.clear_bucket()
+        self.chord_capture.activate()  # This will clear bucket and flush MIDI
         # print(f"chord_capture.active after: {self.chord_capture.active}")
         
     def deactivate(self):
         """Stop chord capture mode."""
         # print(f"ChordCaptureScreen.deactivate() called")
         self.active = False
-        self.chord_capture.deactivate()  # Make sure this calls the ChordCapture.deactivate()
-        self.chord_capture.clear_bucket()
+        self.chord_capture.deactivate()
     
     def on_key(self, key: int) -> ScreenResult:
         if key == BUTTON_LEFT:  # Back button - abort capture
@@ -167,7 +165,7 @@ class UtilitiesScreen(Screen):
 class HomeScreen(Screen):
     def __init__(self):
         self.items = [
-            "Capture 4 Notes (footswitch)",
+            "Initiate Chord Capture",
             "MIDI Settings",
             "Utilities",
             "About",
@@ -186,11 +184,12 @@ class HomeScreen(Screen):
             label = self.items[self.sel]
             if label == "MIDI Settings":
                 return ScreenResult(push=MidiSettingsScreen(), dirty=True)
-            elif label == "Capture 4 Notes (footswitch)":
+            elif label == "Initiate Chord Capture":
                 # Create and activate chord capture screen
                 if self._chord_capture:
+                    print("Menu: Starting chord capture")
                     screen = ChordCaptureScreen(self._chord_capture)
-                    screen.activate()
+                    screen.activate()  # This will clear bucket and flush MIDI
                     return ScreenResult(push=screen, dirty=True)
             elif label == "Utilities":
                 return ScreenResult(push=UtilitiesScreen(), dirty=True)
