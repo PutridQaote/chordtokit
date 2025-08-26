@@ -35,9 +35,20 @@ def main():
 
     try:
         while True:
-            events = nk.read_events()
-            if events:
-                menu.handle_events(events)
+            # Read events more frequently - check multiple times per loop
+            for _ in range(5):  # Check for events up to 5 times per main loop iteration
+                events = nk.read_events()
+                if events:
+                    menu.handle_events(events)
+                    # Process screen updates immediately after events
+                    screen_changed = menu.update()
+                    if menu.dirty or screen_changed:
+                        img, draw = oled.begin_frame()
+                        menu.render_into(draw, oled.width, oled.height)
+                        oled.show(img)
+                        menu.dirty = False
+                else:
+                    break  # No more events, exit the inner loop
 
             # Handle footswitch
             if foot.pressed_edge():
@@ -54,16 +65,15 @@ def main():
                     capture_screen.activate()
                     menu.push(capture_screen)
 
-            # Update current screen (important for ChordCaptureScreen)
+            # Final screen update check
             screen_changed = menu.update()
-            
             if menu.dirty or screen_changed:
                 img, draw = oled.begin_frame()
                 menu.render_into(draw, oled.width, oled.height)
                 oled.show(img)
                 menu.dirty = False
 
-            time.sleep(0.001)  # Much faster polling - 1ms instead of 10ms
+            time.sleep(0.002)  # Slightly increased sleep to balance CPU usage
     except KeyboardInterrupt:
         pass
 

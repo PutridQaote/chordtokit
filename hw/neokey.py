@@ -38,7 +38,7 @@ class NeoKey:
 
         # Debounce state
         # More aggressive debounce
-        self._debounce_s = 2 / 1000.0  # 2ms instead of 4ms
+        self._debounce_s = DEBOUNCE_MS / 1000.0  # 2ms instead of 4ms
         now = time.monotonic()
         self._raw: Dict[int, bool] = {p: True for p in self._logical}    # True = unpressed (HIGH)
         self._stable: Dict[int, bool] = dict(self._raw)
