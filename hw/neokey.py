@@ -96,6 +96,6 @@ class NeoKey:
                 event_type = "release" if self._stable[p] else "press"
                 events.append((event_type, idx))
                 # Uncomment for debugging:
-                # print(f"Pin {p} -> {event_type} (idx {idx}) after {(now - self._last_t[p])*1000:.1f}ms")
+                print(f"Pin {p} -> {event_type} (idx {idx}) after {(now - self._last_t[p])*1000:.1f}ms")
 
         return events
