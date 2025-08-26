@@ -19,7 +19,7 @@ NEOKEY_PIXELS    = 4
 NEOKEY_DATA_PIN  = 3            # led data pin, confirmed by testing
 NEOKEY_BRIGHT    = 0.4          # not used currently??
 
-DEBOUNCE_MS = 10                # key/footswitch debounce window
+DEBOUNCE_MS = 4                # key/footswitch debounce window
 
 
 #------------------------//
