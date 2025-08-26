@@ -11,6 +11,7 @@ from constants import (
     NEOKEY_ADDR,
     NEOKEY_DATA_PIN,
     NEOKEY_KEY_PINS,
+    NEOKEY_BRIGHT,  # Add this import
     DEBOUNCE_MS,
 )
 
@@ -22,7 +23,7 @@ class NeoKey:
     - set_backlight_enabled(bool), set_backlight_color(rgb)
     """
     def __init__(self, addr: int = NEOKEY_ADDR, data_pin: int = NEOKEY_DATA_PIN,
-                 pixels: int = 4, brightness: float = 0.5, 
+                 pixels: int = 4, brightness: float = NEOKEY_BRIGHT,  # Use the constant here
                  backlight_enabled: bool = True, backlight_color: tuple = (84, 255, 61)):
         self._ss = Seesaw(board.I2C(), addr=addr)
 
@@ -123,7 +124,7 @@ class NeoKey:
                 self._raw[p] = cur
                 self._last_t[p] = now
                 # Uncomment for debugging:
-                print(f"Pin {p} raw change: {cur} at {now:.6f}")
+                # print(f"Pin {p} raw change: {cur} at {now:.6f}")
 
             # Has the raw state stayed different long enough?
             if (self._stable[p] != self._raw[p]) and ((now - self._last_t[p]) >= self._debounce_s):
@@ -132,6 +133,6 @@ class NeoKey:
                 event_type = "release" if self._stable[p] else "press"
                 events.append((event_type, idx))
                 # Better precision debugging:
-                print(f"Pin {p} -> {event_type} (idx {idx}) after {(now - self._last_t[p])*1000:.3f}ms")
+                # print(f"Pin {p} -> {event_type} (idx {idx}) after {(now - self._last_t[p])*1000:.3f}ms")
 
         return events
