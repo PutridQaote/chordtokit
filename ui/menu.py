@@ -246,7 +246,7 @@ class UtilitiesScreen(Screen):
         body = [
             f"Duplicates: {'On' if allow_dupes else 'Off'}",
             f"LEDs: {'On' if leds_on else 'Off'}",
-            f"Low Note Octave Down: {'On' if octave_down else 'Off'}",
+            f"LoNote Oct.Down: {'On' if octave_down else 'Off'}",
             "Back",
         ]
         y = 14
