@@ -379,8 +379,8 @@ class MidiSettingsScreen(Screen):
             y += 12
 
 class ShutdownConfirmScreen(Screen):
-    def __init__(self):
-        pass  # No selection needed - just two buttons
+    def __init__(self, neokey=None):
+        self._neokey = neokey  # Store neokey reference
         
     def on_key(self, key: int) -> ScreenResult:
         if key == BUTTON_SELECT:  # Enter key - confirm shutdown
@@ -394,6 +394,11 @@ class ShutdownConfirmScreen(Screen):
         """Perform system shutdown."""
         try:
             print("Shutting down system...")
+            
+            # Turn off NeoKey LEDs first
+            if self._neokey:
+                self._neokey.clear()
+                print("NeoKey LEDs turned off")
             
             # Clear screen and show "safe to unplug" message
             from hw.oled import Oled  # Import here to avoid circular imports
@@ -524,9 +529,9 @@ class Menu:
             not self._back_long_press_triggered and
             (current_time - self._back_press_start) >= self._back_long_press_threshold):
             
-            # Trigger shutdown confirmation
+            # Trigger shutdown confirmation - pass neokey reference
             self._back_long_press_triggered = True
-            self.push(ShutdownConfirmScreen())
+            self.push(ShutdownConfirmScreen(neokey=self.neokey))
             return True
         
         # Handle ChordCaptureScreen updates
