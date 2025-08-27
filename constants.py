@@ -17,7 +17,7 @@ NEOKEY_KEY_PINS = [7, 6, 5, 4]  # this is in the order left→right on the inter
 
 NEOKEY_PIXELS    = 4
 NEOKEY_DATA_PIN  = 3            # led data pin, confirmed by testing
-NEOKEY_BRIGHT    = 0.4          # not used currently??
+NEOKEY_BRIGHT    = 0.2
 
 DEBOUNCE_MS = 2                # key/footswitch debounce window
 

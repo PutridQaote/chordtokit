@@ -24,7 +24,16 @@ def main():
         backlight_color=led_color
     )
     oled = Oled()
-    midi = Midi(cfg.as_dict()); midi.open_ports()
+
+    midi = Midi(cfg.as_dict())
+    midi.open_ports()
+    
+    # Midi thru routing has been configured to:
+    # 1. Never send raw input to the DDTi (main output)
+    # 2. Only send processed chord messages to DDTi
+    # 3. Filter out any "Midi Through" virtual ports to prevent feedback
+    # 4. Route raw MIDI to all other physical devices
+
     foot = Footswitch(active_low=bool(cfg.get("footswitch_active_low", FOOTSWITCH_ACTIVE_LOW)))
 
     allow_dupes = bool(cfg.get("allow_duplicate_notes", False))

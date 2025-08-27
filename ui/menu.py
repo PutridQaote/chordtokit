@@ -290,9 +290,9 @@ class HomeScreen(Screen):
 class MidiSettingsScreen(Screen):
     def __init__(self):
         self.rows = [
-            ("Input Port", self._cycle_in),
-            ("Output Port", self._cycle_out),
-            ("Thru", self._toggle_thru),
+            ("Chord In", self._cycle_in),
+            ("Chord Out", self._cycle_out),
+            ("MIDI Thru", self._toggle_thru),
             ("Back", None),
         ]
         self.sel = 0
@@ -327,11 +327,13 @@ class MidiSettingsScreen(Screen):
         self._cfg.save()
 
     def _toggle_thru(self):
-        midi = self._midi
-        new_val = not midi.get_thru()
-        midi.set_thru(new_val)
+        """Toggle MIDI thru routing on/off."""
+        if not hasattr(self, "_midi") or not self._midi:
+            return
+        val = not self._midi.get_thru()
+        self._midi.set_thru(val)
         # persist
-        self._cfg.set("midi_thru", new_val)
+        self._cfg.set("midi_thru", val)
         self._cfg.save()
 
     def on_key(self, key: int) -> ScreenResult:
@@ -361,10 +363,11 @@ class MidiSettingsScreen(Screen):
         cur_in = midi.get_selected_in() if midi else "-"
         cur_out = midi.get_selected_out() if midi else "-"
         thru = midi.get_thru() if midi else False
+        
         body = [
-            f"In Port:  {cur_in if cur_in else '-'}",
-            f"OutPort: {cur_out if cur_out else '-'}",
-            f"Thru:        {'On' if thru else 'Off'}",
+            f"Chord In:  {cur_in if cur_in else '-'}",
+            f"Chord Out: {cur_out if cur_out else '-'}",
+            f"MIDI Thru: {'On' if thru else 'Off'}",
             "Back",
         ]
         y = 14
