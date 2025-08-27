@@ -13,6 +13,8 @@ from typing import List, Optional
 from PIL import Image, ImageDraw, ImageFont
 import math
 import time
+import subprocess
+import os
 
 BUTTON_LEFT, BUTTON_UP, BUTTON_DOWN, BUTTON_SELECT = 0, 1, 2, 3  # logical left→right indices
 
@@ -376,6 +378,54 @@ class MidiSettingsScreen(Screen):
             draw.text((4, y), prefix + line, fill=1)
             y += 12
 
+class ShutdownConfirmScreen(Screen):
+    def __init__(self):
+        self.sel = 0  # 0 = Cancel, 1 = Shutdown
+        
+    def on_key(self, key: int) -> ScreenResult:
+        if key == BUTTON_UP or key == BUTTON_DOWN:
+            self.sel = 1 - self.sel  # Toggle between 0 and 1
+            return ScreenResult(dirty=True)
+        if key == BUTTON_SELECT:
+            if self.sel == 1:  # Shutdown selected
+                self._shutdown()
+                return ScreenResult(dirty=False)  # App will exit
+            else:  # Cancel selected
+                return ScreenResult(pop=True)
+        if key == BUTTON_LEFT:  # Back button cancels
+            return ScreenResult(pop=True)
+        return ScreenResult(dirty=False)
+    
+    def _shutdown(self):
+        """Perform system shutdown."""
+        try:
+            print("Shutting down system...")
+            # Use subprocess to run shutdown command
+            subprocess.run(['sudo', 'shutdown', '-h', 'now'], check=True)
+        except Exception as e:
+            print(f"Shutdown failed: {e}")
+            # Could add error handling here if needed
+    
+    def render(self, draw: ImageDraw.ImageDraw, w: int, h: int) -> None:
+        draw.rectangle((0, 0, w-1, h-1), outline=1, fill=0)
+        
+        # Title
+        title = "Shutdown System?"
+        bbox = draw.textbbox((0, 0), title)
+        title_w = bbox[2] - bbox[0]
+        draw.text(((w - title_w) // 2, 8), title, fill=1)
+        
+        # Options
+        options = ["Cancel", "Shutdown"]
+        y_start = 28
+        for i, option in enumerate(options):
+            prefix = "> " if i == self.sel else "  "
+            draw.text((20, y_start + i * 12), prefix + option, fill=1)
+        
+        # Instructions
+        draw.text((4, h - 24), "UP/DOWN: Select", fill=1)
+        draw.text((4, h - 12), "ENTER: Confirm, BACK: Cancel", fill=1)
+
 class Menu:
     def __init__(self, midi_adapter=None, config=None, chord_capture=None, neokey=None):
         self._stack: List[Screen] = [HomeScreen()]
@@ -384,6 +434,11 @@ class Menu:
         self.cfg = config
         self.chord_capture = chord_capture
         self.neokey = neokey
+        
+        # Long press detection for shutdown
+        self._back_press_start = None
+        self._back_long_press_threshold = 3.0  # 3 seconds
+        self._back_long_press_triggered = False
         
         # Set chord_capture reference for the home screen
         if chord_capture and isinstance(self._stack[0], HomeScreen):
@@ -417,8 +472,61 @@ class Menu:
             self._stack.pop()
             self.dirty = True
 
+    def handle_events(self, key_events: List[tuple]):
+        """Consume NeoKey events [('press'|'release', idx), ...]."""
+        acted = False
+        current_time = time.monotonic()
+        
+        for ev, idx in key_events:
+            action = self._logical_to_action(idx)
+            if action is None:
+                continue
+                
+            # Handle back button long press for shutdown
+            if action == BUTTON_LEFT:
+                if ev == 'press':
+                    self._back_press_start = current_time
+                    self._back_long_press_triggered = False
+                elif ev == 'release':
+                    if self._back_press_start and not self._back_long_press_triggered:
+                        # Normal short press - handle as usual
+                        res = self._top().on_key(action)
+                        if res.push:
+                            self.push(res.push)
+                        if res.pop:
+                            self.pop()
+                        if res.dirty:
+                            acted = True
+                    self._back_press_start = None
+                    self._back_long_press_triggered = False
+            elif ev == 'press':
+                # Handle other button presses normally
+                res = self._top().on_key(action)
+                if res.push:
+                    self.push(res.push)
+                if res.pop:
+                    self.pop()
+                if res.dirty:
+                    acted = True
+                    
+        if acted:
+            self.dirty = True
+
     def update(self) -> bool:
-        """Update active screen and return True if screen changed."""
+        """Update active screen and check for long press. Return True if screen changed."""
+        current_time = time.monotonic()
+        
+        # Check for back button long press
+        if (self._back_press_start and 
+            not self._back_long_press_triggered and
+            (current_time - self._back_press_start) >= self._back_long_press_threshold):
+            
+            # Trigger shutdown confirmation
+            self._back_long_press_triggered = True
+            self.push(ShutdownConfirmScreen())
+            return True
+        
+        # Handle ChordCaptureScreen updates
         top = self._top()
         if isinstance(top, ChordCaptureScreen):
             result = top.update()
@@ -427,26 +535,8 @@ class Menu:
                 return True
             if result.dirty:
                 self.dirty = True
+                
         return False
-
-    def handle_events(self, key_events: List[tuple]):
-        """Consume NeoKey events [('press'|'release', idx), ...]."""
-        acted = False
-        for ev, idx in key_events:
-            if ev != 'press':
-                continue
-            action = self._logical_to_action(idx)
-            if action is None:
-                continue
-            res = self._top().on_key(action)
-            if res.push:
-                self.push(res.push)
-            if res.pop:
-                self.pop()
-            if res.dirty:
-                acted = True
-        if acted:
-            self.dirty = True
 
     # --- Rendering helpers ---
     def render_into(self, draw: ImageDraw.ImageDraw, w: int, h: int):

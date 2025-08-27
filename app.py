@@ -83,7 +83,7 @@ def main():
                     capture_screen.activate()
                     menu.push(capture_screen)
 
-            # Final screen update check
+            # Check for long press and other screen updates
             screen_changed = menu.update()
             if menu.dirty or screen_changed:
                 img, draw = oled.begin_frame()
