@@ -29,8 +29,13 @@ def _pick_by_substr(names: List[str], substr: Optional[str]) -> Optional[str]:
     return None
 
 def _is_virtual_through(name: str) -> bool:
-    """Check if port is an ALSA virtual through port."""
-    return bool(re.search(r'midi\s+through', name, re.IGNORECASE))
+    """Check if port is an ALSA virtual through port or RtMidi port."""
+    patterns = [
+        r'midi\s+through',      # "Midi Through Port-0"
+        r'rtmidi',              # "RtMidiIn Client", "RtMidiOut Client"
+        r'through',             # Generic "through" ports
+    ]
+    return any(re.search(pattern, name, re.IGNORECASE) for pattern in patterns)
 
 class Midi:
     def __init__(self, cfg: Optional[dict] = None):
@@ -38,15 +43,19 @@ class Midi:
         self._thru = bool(cfg.get("midi_thru", False))
         self._thru_mode = cfg.get("midi_thru_mode", "all_except_main_out")
         
-        # Port filtering configuration
-        self._thru_include = cfg.get("midi_thru_include", [])  # Explicit whitelist
-        self._thru_exclude_substr = cfg.get("midi_thru_exclude_substr", ["Midi Through"])  # Substring blacklist
+        # Port filtering configuration - Add RtMidi to default exclusions
+        self._thru_include = cfg.get("midi_thru_include", [])
+        self._thru_exclude_substr = cfg.get("midi_thru_exclude_substr", [
+            "Midi Through", 
+            "RtMidi",           # Add this to prevent feedback loops
+            "through",          # Generic through ports
+        ])
 
-        # Get port lists, filtering out virtual through ports
+        # Get port lists, filtering out virtual through ports and RtMidi ports
         all_ins = mido.get_input_names()
         all_outs = mido.get_output_names()
         
-        # Filter out "Midi Through" from enumeration
+        # Filter out problematic ports from enumeration
         ins = [name for name in _dedupe(all_ins) if not _is_virtual_through(name)]
         outs = [name for name in _dedupe(all_outs) if not _is_virtual_through(name)]
 
@@ -92,7 +101,7 @@ class Midi:
         if not self._thru:
             return
             
-        # Get all available output ports, filtering out virtual through ports
+        # Get all available output ports, filtering out problematic ports
         all_outs = [name for name in _dedupe(mido.get_output_names()) 
                     if not _is_virtual_through(name)]
         
@@ -118,6 +127,7 @@ class Midi:
                 for substr in self._thru_exclude_substr:
                     if substr.lower() in name.lower():
                         excluded = True
+                        print(f"Excluding MIDI port from thru: {name} (matches '{substr}')")
                         break
                 
                 if not excluded:
@@ -131,7 +141,7 @@ class Midi:
                 print(f"Opened MIDI thru output: {name}")
             except Exception as e:
                 print(f"Error opening MIDI thru output {name}: {e}")
-                
+
     def close_thru_ports(self):
         """Close all thru ports."""
         for name, port in self._thru_ports:
