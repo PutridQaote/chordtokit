@@ -43,19 +43,18 @@ class Midi:
         self._thru = bool(cfg.get("midi_thru", False))
         self._thru_mode = cfg.get("midi_thru_mode", "all_except_main_out")
         
-        # Port filtering configuration - Add RtMidi to default exclusions
+        # Port filtering configuration
         self._thru_include = cfg.get("midi_thru_include", [])
         self._thru_exclude_substr = cfg.get("midi_thru_exclude_substr", [
             "Midi Through", 
-            "RtMidi",           # Add this to prevent feedback loops
-            "through",          # Generic through ports
+            "RtMidi",
+            "through"
         ])
 
-        # Get port lists, filtering out virtual through ports and RtMidi ports
+        # Get port lists, filtering out problematic ports
         all_ins = mido.get_input_names()
         all_outs = mido.get_output_names()
         
-        # Filter out problematic ports from enumeration
         ins = [name for name in _dedupe(all_ins) if not _is_virtual_through(name)]
         outs = [name for name in _dedupe(all_outs) if not _is_virtual_through(name)]
 
@@ -67,9 +66,8 @@ class Midi:
 
         self._in_port = None
         self._out_port = None
-        self._thru_ports = []  # Additional ports for thru routing
+        self._thru_ports = []
 
-    # ----- Port Management -----
     def open_ports(self):
         """Open MIDI input/output ports based on current settings."""
         self.close_ports()
@@ -90,12 +88,11 @@ class Midi:
                 print(f"Error opening MIDI output {self._out_name}: {e}")
                 self._out_port = None
                 
-        # Open thru ports if enabled
+        # Open thru ports (no threading needed)
         self.open_thru_ports()
 
     def open_thru_ports(self):
         """Open additional ports for MIDI thru routing based on thru mode."""
-        # Close any existing thru ports
         self.close_thru_ports()
         
         if not self._thru:
@@ -105,24 +102,15 @@ class Midi:
         all_outs = [name for name in _dedupe(mido.get_output_names()) 
                     if not _is_virtual_through(name)]
         
-        # Determine which ports to open based on mode and filters
         ports_to_open = []
         
-        # If explicit inclusion list is provided, use only those ports
         if self._thru_include:
             ports_to_open = [name for name in all_outs if name in self._thru_include]
         else:
-            # Otherwise use all ports except excluded ones
             for name in all_outs:
-                # Always exclude the main output (DDTi)
-                if name == self._out_name:
+                if name == self._out_name or name == self._in_name:
                     continue
                     
-                # Always exclude the input port to prevent loopback
-                if name == self._in_name:
-                    continue
-                    
-                # Check against exclusion substrings
                 excluded = False
                 for substr in self._thru_exclude_substr:
                     if substr.lower() in name.lower():
@@ -154,6 +142,8 @@ class Midi:
 
     def close_ports(self):
         """Close all MIDI ports."""
+        self.close_thru_ports()  # This will stop the thru thread
+        
         if self._in_port:
             try:
                 self._in_port.close()
@@ -169,8 +159,6 @@ class Midi:
             except Exception:
                 pass
             self._out_port = None
-            
-        self.close_thru_ports()
 
     def reopen_ports(self):
         """Close and reopen all ports."""
@@ -205,9 +193,11 @@ class Midi:
     def set_thru(self, val: bool): 
         """Enable/disable MIDI thru routing."""
         self._thru = bool(val)
-        # Update thru ports when thru setting changes
-        self.open_thru_ports()
-        
+        if self._thru:
+            self.open_thru_ports()
+        else:
+            self.close_thru_ports()
+
     def get_thru_mode(self) -> str: return self._thru_mode
     def set_thru_mode(self, mode: str):
         """Set MIDI thru routing mode and update ports.
@@ -222,21 +212,21 @@ class Midi:
 
     # ----- Runtime I/O -----
     def iter_input(self):
-        """Get pending MIDI input messages and handle thru routing."""
+        """Get pending MIDI input messages and handle thru routing inline."""
         if self._in_port is None:
             return []
         
         msgs = list(self._in_port.iter_pending())
         
-        # Handle MIDI thru routing - only to secondary outputs, never to main DDTi
-        if self._thru and msgs:
-            for _, port in self._thru_ports:
-                for m in msgs:
-                    try: 
-                        port.send(m)
+        # Handle MIDI thru immediately - no threading conflicts
+        if self._thru and msgs and self._thru_ports:
+            for msg in msgs:
+                for _, port in self._thru_ports:
+                    try:
+                        port.send(msg)
                     except Exception as e:
-                        print(f"Error sending MIDI thru: {e}")
-                    
+                        print(f"Error in MIDI thru: {e}")
+        
         return msgs
 
     def send(self, msg):
