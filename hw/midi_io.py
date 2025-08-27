@@ -75,7 +75,7 @@ class Midi:
         if self._in_name:
             try:
                 self._in_port = mido.open_input(self._in_name)
-                print(f"Opened MIDI input: {self._in_name}")
+                # print(f"Opened MIDI input: {self._in_name}")
             except Exception as e:
                 print(f"Error opening MIDI input {self._in_name}: {e}")
                 self._in_port = None
@@ -83,7 +83,7 @@ class Midi:
         if self._out_name:
             try:
                 self._out_port = mido.open_output(self._out_name)
-                print(f"Opened MIDI output: {self._out_name}")
+                # print(f"Opened MIDI output: {self._out_name}")
             except Exception as e:
                 print(f"Error opening MIDI output {self._out_name}: {e}")
                 self._out_port = None

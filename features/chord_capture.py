@@ -13,18 +13,20 @@ class ChordCapture:
     When 4 distinct notes are collected, sends SysEx to DDTi via MIDI output.
     """
     
-    def __init__(self, midi_adapter, max_notes: int = 4, timeout_seconds: float = 5.0, allow_duplicates: bool = False):
+    def __init__(self, midi_adapter, max_notes: int = 4, timeout_seconds: float = 5.0, allow_duplicates: bool = False, octave_down_lowest: bool = False):
         """
         Args:
             midi_adapter: Midi object with iter_input() and send() methods
             max_notes: Number of notes needed for a complete chord (default 4)
             timeout_seconds: Clear bucket if no new notes for this long
             allow_duplicates: If True, allow duplicate notes in chord
+            octave_down_lowest: If True, transpose lowest note down one octave
         """
         self.midi = midi_adapter
         self.max_notes = max_notes
         self.timeout_seconds = timeout_seconds
         self.allow_duplicates = allow_duplicates
+        self.octave_down_lowest = octave_down_lowest
         
         self.ddti = DDTi()
         self.bucket: List[int] = []
@@ -34,6 +36,11 @@ class ChordCapture:
     def set_allow_duplicates(self, allow: bool):
         """Change duplicate policy and clear bucket."""
         self.allow_duplicates = allow
+        self.clear_bucket()
+
+    def set_octave_down_lowest(self, octave_down: bool):
+        """Change octave down policy and clear bucket."""
+        self.octave_down_lowest = octave_down
         self.clear_bucket()
 
     def activate(self):
@@ -82,7 +89,6 @@ class ChordCapture:
         # Process incoming MIDI messages
         new_notes = []
         all_messages = list(self.midi.iter_input())
-        # print(f"ChordCapture.process_midi_input: active={self.active}, got {len(all_messages)} messages")
         
         for msg in all_messages:
             if msg.type == 'note_on' and msg.velocity > 0:
@@ -111,25 +117,45 @@ class ChordCapture:
                 chord = sorted(list(OrderedDict.fromkeys(self.bucket)))[:self.max_notes]
             
             if len(chord) == self.max_notes:
+                # Apply octave down to lowest note if enabled
+                final_chord = self._apply_octave_down(chord) if self.octave_down_lowest else chord
                 print(f"Captured chord: {chord}")
+                if self.octave_down_lowest:
+                    print(f"After octave down: {final_chord}")
                 
                 # Send SysEx to DDTi
                 try:
-                    sysex_msg = self.ddti.build_sysex(chord)
+                    sysex_msg = self.ddti.build_sysex(final_chord)
                     self.midi.send(sysex_msg)
                     print(f"Sent SysEx: {len(sysex_msg.data)} bytes")
                 except Exception as e:
                     print(f"Error sending SysEx: {e}")
                 
-                # Clear bucket and return the chord
+                # Clear bucket and return the original chord (for display purposes)
                 self.bucket.clear()
-                return chord
+                return chord  # Return original chord for display
             elif not self.allow_duplicates:
                 print(f"Need {self.max_notes} distinct notes; got {len(chord)}: {chord}")
                 # Keep collecting if we don't have enough unique notes
                 
         return None
-    
+
+    def _apply_octave_down(self, chord: List[int]) -> List[int]:
+        """Apply octave down to the lowest note in the chord."""
+        if not chord:
+            return chord
+            
+        result = list(chord)
+        lowest_note = min(result)
+        lowest_index = result.index(lowest_note)
+        
+        # Transpose down one octave (subtract 12 semitones)
+        # Ensure we don't go below MIDI note 0
+        new_lowest = max(0, lowest_note - 12)
+        result[lowest_index] = new_lowest
+        
+        return result
+
     def clear_bucket(self):
         """Manually clear the note collection bucket."""
         if self.bucket:

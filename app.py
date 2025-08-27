@@ -37,7 +37,8 @@ def main():
     foot = Footswitch(active_low=bool(cfg.get("footswitch_active_low", FOOTSWITCH_ACTIVE_LOW)))
 
     allow_dupes = bool(cfg.get("allow_duplicate_notes", False))
-    chord_capture = ChordCapture(midi, allow_duplicates=allow_dupes)
+    octave_down = bool(cfg.get("octave_down_lowest", False))
+    chord_capture = ChordCapture(midi, allow_duplicates=allow_dupes, octave_down_lowest=octave_down)
 
     # Pass neokey to menu for LED control
     menu = Menu(midi_adapter=midi, config=cfg, chord_capture=chord_capture, neokey=nk)

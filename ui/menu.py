@@ -180,6 +180,7 @@ class UtilitiesScreen(Screen):
         self.rows = [
             ("Allow Duplicate Notes", self._toggle_duplicates),
             ("LED Backlights", self._toggle_leds),
+            ("Octave Down Lowest", self._toggle_octave_down),
             ("Back", None),
         ]
         self.sel = 0
@@ -208,6 +209,14 @@ class UtilitiesScreen(Screen):
             self._cfg.save()
             self._neokey.set_backlight_enabled(new_val)
 
+    def _toggle_octave_down(self):
+        if self._chord_capture and self._cfg:
+            current = self._cfg.get("octave_down_lowest", False)
+            new_val = not current
+            self._cfg.set("octave_down_lowest", new_val)
+            self._cfg.save()
+            self._chord_capture.set_octave_down_lowest(new_val)
+
     def on_key(self, key: int) -> ScreenResult:
         if key == BUTTON_UP:
             self.sel = (self.sel - 1) % len(self.rows)
@@ -232,10 +241,12 @@ class UtilitiesScreen(Screen):
         
         allow_dupes = self._cfg.get("allow_duplicate_notes", False) if self._cfg else False
         leds_on = self._cfg.get("led_backlights_on", True) if self._cfg else True
+        octave_down = self._cfg.get("octave_down_lowest", False) if self._cfg else False
         
         body = [
             f"Duplicates: {'On' if allow_dupes else 'Off'}",
             f"LEDs: {'On' if leds_on else 'Off'}",
+            f"Low Note Octave Down: {'On' if octave_down else 'Off'}",
             "Back",
         ]
         y = 14
@@ -250,7 +261,7 @@ class HomeScreen(Screen):
             "Initiate Chord Capture",
             "MIDI Settings",
             "Utilities",
-            "About",
+            # "About",
         ]
         self.sel = 0
         self._chord_capture = None  # Will be set by Menu
