@@ -179,8 +179,8 @@ class UtilitiesScreen(Screen):
     def __init__(self):
         self.rows = [
             ("Allow Duplicate Notes", self._toggle_duplicates),
-            ("LED Backlights", self._toggle_leds),
             ("Octave Down Lowest", self._toggle_octave_down),
+            ("LED Backlights", self._toggle_leds),
             ("Back", None),
         ]
         self.sel = 0
@@ -245,8 +245,8 @@ class UtilitiesScreen(Screen):
         
         body = [
             f"Duplicates: {'On' if allow_dupes else 'Off'}",
-            f"LEDs: {'On' if leds_on else 'Off'}",
             f"LoNote OctDown: {'On' if octave_down else 'Off'}",
+            f"LEDs: {'On' if leds_on else 'Off'}",
             "Back",
         ]
         y = 14
