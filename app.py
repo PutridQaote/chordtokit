@@ -10,8 +10,20 @@ from hw.footswitch import Footswitch
 from ui.menu import Menu, ChordCaptureScreen
 from features.chord_capture import ChordCapture
 
+import subprocess
+
+def notify_ready():
+    """function to detect when initial system loading has finished, facilitating startup boot screen."""
+    try:
+        subprocess.run(["/usr/bin/systemd-notify", "--ready"], check=False)
+    except Exception:
+        pass
+
 
 def main():
+
+    notify_ready()
+
     cfg = Config().load()
 
     # Get LED settings from config
