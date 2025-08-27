@@ -22,8 +22,6 @@ def notify_ready():
 
 def main():
 
-    notify_ready()
-
     cfg = Config().load()
 
     # Get LED settings from config
@@ -64,6 +62,8 @@ def main():
     oled.show(img)
     menu.dirty = False
 
+    notify_ready()
+    
     try:
         while True:
             # Read events more frequently - check multiple times per loop
