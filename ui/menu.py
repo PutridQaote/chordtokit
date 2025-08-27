@@ -261,7 +261,7 @@ class HomeScreen(Screen):
             "Initiate Chord Capture",
             "MIDI Settings",
             "Utilities",
-            # "About",
+            "About",
         ]
         self.sel = 0
         self._chord_capture = None  # Will be set by Menu
