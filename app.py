@@ -12,14 +12,6 @@ from features.chord_capture import ChordCapture
 
 import subprocess
 
-def notify_ready():
-    """function to detect when initial system loading has finished, facilitating startup boot screen."""
-    try:
-        subprocess.run(["/usr/bin/systemd-notify", "--ready"], check=False)
-    except Exception:
-        pass
-
-
 def main():
 
     cfg = Config().load()
@@ -62,8 +54,6 @@ def main():
     oled.show(img)
     menu.dirty = False
 
-    notify_ready()
-    
     try:
         while True:
             # Read events more frequently - check multiple times per loop
