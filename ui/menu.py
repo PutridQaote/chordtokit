@@ -380,19 +380,13 @@ class MidiSettingsScreen(Screen):
 
 class ShutdownConfirmScreen(Screen):
     def __init__(self):
-        self.sel = 0  # 0 = Cancel, 1 = Shutdown
+        pass  # No selection needed - just two buttons
         
     def on_key(self, key: int) -> ScreenResult:
-        if key == BUTTON_UP or key == BUTTON_DOWN:
-            self.sel = 1 - self.sel  # Toggle between 0 and 1
-            return ScreenResult(dirty=True)
-        if key == BUTTON_SELECT:
-            if self.sel == 1:  # Shutdown selected
-                self._shutdown()
-                return ScreenResult(dirty=False)  # App will exit
-            else:  # Cancel selected
-                return ScreenResult(pop=True)
-        if key == BUTTON_LEFT:  # Back button cancels
+        if key == BUTTON_SELECT:  # Enter key - confirm shutdown
+            self._shutdown()
+            return ScreenResult(dirty=False)  # App will exit
+        if key == BUTTON_LEFT:  # Back button - cancel
             return ScreenResult(pop=True)
         return ScreenResult(dirty=False)
     
@@ -400,6 +394,26 @@ class ShutdownConfirmScreen(Screen):
         """Perform system shutdown."""
         try:
             print("Shutting down system...")
+            
+            # Clear screen and show "safe to unplug" message
+            from hw.oled import Oled  # Import here to avoid circular imports
+            oled = Oled()
+            img, draw = oled.begin_frame()
+            
+            # Clear screen completely
+            draw.rectangle((0, 0, oled.width-1, oled.height-1), outline=0, fill=0)
+            
+            # Center "safe to unplug" message
+            message = "safe to unplug"
+            bbox = draw.textbbox((0, 0), message)
+            text_w = bbox[2] - bbox[0]
+            text_h = bbox[3] - bbox[1]
+            x = (oled.width - text_w) // 2
+            y = (oled.height - text_h) // 2
+            draw.text((x, y), message, fill=1)
+            
+            oled.show(img)
+            
             # Use subprocess to run shutdown command
             subprocess.run(['sudo', 'shutdown', '-h', 'now'], check=True)
         except Exception as e:
@@ -409,22 +423,11 @@ class ShutdownConfirmScreen(Screen):
     def render(self, draw: ImageDraw.ImageDraw, w: int, h: int) -> None:
         draw.rectangle((0, 0, w-1, h-1), outline=1, fill=0)
         
-        # Title
-        title = "Shutdown System?"
-        bbox = draw.textbbox((0, 0), title)
-        title_w = bbox[2] - bbox[0]
-        draw.text(((w - title_w) // 2, 8), title, fill=1)
-        
-        # Options
-        options = ["Cancel", "Shutdown"]
-        y_start = 28
-        for i, option in enumerate(options):
-            prefix = "> " if i == self.sel else "  "
-            draw.text((20, y_start + i * 12), prefix + option, fill=1)
-        
-        # Instructions
-        draw.text((4, h - 24), "UP/DOWN: Select", fill=1)
-        draw.text((4, h - 12), "ENTER: Confirm, BACK: Cancel", fill=1)
+        # Simple shutdown question - centered
+        question = "Shutdown?"
+        bbox = draw.textbbox((0, 0), question)
+        text_w = bbox[2] - bbox[0]
+        draw.text(((w - text_w) // 2, h // 2 - 6), question, fill=1)
 
 class Menu:
     def __init__(self, midi_adapter=None, config=None, chord_capture=None, neokey=None):
@@ -437,7 +440,7 @@ class Menu:
         
         # Long press detection for shutdown
         self._back_press_start = None
-        self._back_long_press_threshold = 3.0  # 3 seconds
+        self._back_long_press_threshold = 2.2  # 2.2 seconds of hold before it shuts down
         self._back_long_press_triggered = False
         
         # Set chord_capture reference for the home screen
