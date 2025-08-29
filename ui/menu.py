@@ -180,7 +180,7 @@ class UtilitiesScreen(Screen):
         self.rows = [
             ("Allow Duplicate Notes", self._toggle_duplicates),
             ("Octave Down Lowest", self._toggle_octave_down),
-            ("LED Backlights", self._toggle_leds),
+            ("LED Brightness", self._cycle_led_brightness),  # Changed from "LED Backlights"
             ("Back", None),
         ]
         self.sel = 0
@@ -201,13 +201,56 @@ class UtilitiesScreen(Screen):
             self._cfg.save()
             self._chord_capture.set_allow_duplicates(new_val)
 
-    def _toggle_leds(self):
-        if self._neokey and self._cfg:
-            current = self._cfg.get("led_backlights_on", True)
-            new_val = not current
-            self._cfg.set("led_backlights_on", new_val)
-            self._cfg.save()
-            self._neokey.set_backlight_enabled(new_val)
+    def _cycle_led_brightness(self):
+        """Cycle through LED brightness levels: 100%, 75%, 50%, 25%, Off."""
+        if not self._neokey or not self._cfg:
+            return
+            
+        # Define brightness levels: Off, 25%, 50%, 75%, 100%
+        brightness_levels = [0.0, 0.25, 0.5, 0.75, 1.0]
+        brightness_labels = ["Off", "25%", "50%", "75%", "100%"]
+        
+        # Get current brightness
+        current_brightness = self._cfg.get("led_backlight_brightness", 1.0)
+        
+        # Find current index (with tolerance for floating point comparison)
+        current_index = 0
+        for i, level in enumerate(brightness_levels):
+            if abs(current_brightness - level) < 0.01:
+                current_index = i
+                break
+        
+        # Move to next level (cycle back to 0 after last)
+        next_index = (current_index + 1) % len(brightness_levels)
+        new_brightness = brightness_levels[next_index]
+        
+        # Update config
+        self._cfg.set("led_backlight_brightness", new_brightness)
+        self._cfg.set("led_backlights_on", new_brightness > 0.0)  # Auto-disable if brightness is 0
+        self._cfg.save()
+        
+        # Update hardware
+        self._neokey.set_backlight_brightness(new_brightness)
+        self._neokey.set_backlight_enabled(new_brightness > 0.0)
+
+    def _get_led_brightness_label(self) -> str:
+        """Get the current LED brightness as a label."""
+        if not self._cfg:
+            return "100%"
+            
+        brightness = self._cfg.get("led_backlight_brightness", 1.0)
+        
+        # Map brightness to labels
+        if brightness <= 0.0:
+            return "Off"
+        elif brightness <= 0.25:
+            return "25%"
+        elif brightness <= 0.5:
+            return "50%"
+        elif brightness <= 0.75:
+            return "75%"
+        else:
+            return "100%"
 
     def _toggle_octave_down(self):
         if self._chord_capture and self._cfg:
@@ -240,13 +283,13 @@ class UtilitiesScreen(Screen):
         draw.text((4, 2), "Utilities", fill=1)
         
         allow_dupes = self._cfg.get("allow_duplicate_notes", False) if self._cfg else False
-        leds_on = self._cfg.get("led_backlights_on", True) if self._cfg else True
         octave_down = self._cfg.get("octave_down_lowest", False) if self._cfg else False
+        led_brightness = self._get_led_brightness_label()
         
         body = [
             f"Duplicates: {'On' if allow_dupes else 'Off'}",
             f"LoNote OctDown: {'On' if octave_down else 'Off'}",
-            f"LEDs: {'On' if leds_on else 'Off'}",
+            f"LEDs: {led_brightness}",  # Show current brightness level
             "Back",
         ]
         y = 14

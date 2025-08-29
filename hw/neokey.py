@@ -78,6 +78,12 @@ class NeoKey:
         if self._backlight_enabled:
             self._update_backlights()
 
+    def set_backlight_brightness(self, brightness: float):
+        """Set the backlight brightness (0.0 to 1.0)."""
+        self._px.brightness = float(brightness)
+        if self._backlight_enabled:
+            self._update_backlights()
+
     def get_backlight_enabled(self) -> bool:
         """Get current backlight enabled state."""
         return self._backlight_enabled
@@ -85,6 +91,10 @@ class NeoKey:
     def get_backlight_color(self) -> Tuple[int, int, int]:
         """Get current backlight color."""
         return self._backlight_color
+
+    def get_backlight_brightness(self) -> float:
+        """Get current backlight brightness."""
+        return self._px.brightness
 
     def _update_backlights(self):
         """Update the backlight LEDs based on current settings."""

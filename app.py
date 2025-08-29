@@ -17,12 +17,13 @@ def main():
 
     cfg = Config().load()
 
-    # Get LED settings from config
+    # Get LED settings from config - now includes brightness
     led_enabled = bool(cfg.get("led_backlights_on", True))
     led_color = tuple(cfg.get("led_backlight_color", [84, 255, 61]))
+    led_brightness = float(cfg.get("led_backlight_brightness", 1.0))
     
     nk = NeoKey(
-        brightness=float(cfg.get("neokey_brightness", 0.5)),
+        brightness=led_brightness,  # Use the brightness setting
         backlight_enabled=led_enabled,
         backlight_color=led_color
     )

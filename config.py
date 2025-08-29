@@ -21,6 +21,7 @@ DEFAULTS: Dict[str, Any] = {
     "neokey_brightness": 0.5,
     "led_backlights_on": True,     # This controls the LED state
     "led_backlight_color": [84, 255, 61],  # Default sage green color
+    "led_backlight_brightness": 1.0,  # Add this new setting (100%)
     "octave_down_lowest": False,
     "allow_duplicate_notes": False,
 
