@@ -12,11 +12,10 @@ DEFAULTS: Dict[str, Any] = {
     "midi_out_name": None,         # exact ALSA/Mido name to open
     "midi_in_substr": "triggerio", # fallback matching if exact name not found
     "midi_out_substr": "triggerio",
-    "midi_thru": False,
-    "midi_thru_mode": "all_except_main_out",  # "all_except_main_out" or "all_devices"
-    "midi_thru_include": [],       # If non-empty, only route to these exact port names
-    "midi_thru_exclude_substr": ["Midi Through", "RtMidi",           # Prevent feedback loops
-                                    "through"],                      # Generic through ports
+    
+    # ALSA Hardware Routing (replaces old midi_thru)
+    "alsa_keyboard_thru": False,  # Keyboard → External devices
+    "alsa_ddti_thru": True,       # DDTi → External devices (default ON)
 
     # UI / behavior
     "neokey_brightness": 0.5,

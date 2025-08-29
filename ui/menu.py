@@ -305,82 +305,51 @@ class MidiSettingsScreen(Screen):
         self.rows = [
             ("Chord In", self._cycle_in),
             ("Chord Out", self._cycle_out),
-            ("MIDI Thru", self._toggle_thru),
+            ("Keyboard Thru", self._toggle_keyboard_thru),
+            ("DDTi Thru", self._toggle_ddti_thru),
             ("Back", None),
         ]
         self.sel = 0
-        # The actual port lists are fetched from the midi adapter lazily in render
 
-    def attach(self, midi_adapter, config):
+    def attach(self, midi_adapter, config, alsa_router=None):
         self._midi = midi_adapter
         self._cfg = config
+        self._router = alsa_router
 
-    def _cycle_in(self):
-        midi = self._midi
-        ins = midi.get_inputs()
-        if not ins: return
-        cur = midi.get_selected_in()
-        idx = (ins.index(cur) + 1) % len(ins) if cur in ins else 0
-        chosen = ins[idx]
-        midi.set_in(chosen)
-        # persist
-        self._cfg.set("midi_in_name", chosen)
-        self._cfg.save()
-
-    def _cycle_out(self):
-        midi = self._midi
-        outs = midi.get_outputs()
-        if not outs: return
-        cur = midi.get_selected_out()
-        idx = (outs.index(cur) + 1) % len(outs) if cur in outs else 0
-        chosen = outs[idx]
-        midi.set_out(chosen)
-        # persist
-        self._cfg.set("midi_out_name", chosen)
-        self._cfg.save()
-
-    def _toggle_thru(self):
-        """Toggle MIDI thru routing on/off."""
-        if not hasattr(self, "_midi") or not self._midi:
+    def _toggle_keyboard_thru(self):
+        """Toggle keyboard ALSA thru routing."""
+        if not self._router or not self._cfg:
             return
-        val = not self._midi.get_thru()
-        self._midi.set_thru(val)
-        # persist
-        self._cfg.set("midi_thru", val)
+        val = not self._router.get_keyboard_thru()
+        self._router.set_keyboard_thru(val)
+        self._cfg.set("alsa_keyboard_thru", val)
         self._cfg.save()
 
-    def on_key(self, key: int) -> ScreenResult:
-        if key == BUTTON_UP:
-            self.sel = (self.sel - 1) % len(self.rows)
-            return ScreenResult(dirty=True)
-        if key == BUTTON_DOWN:
-            self.sel = (self.sel + 1) % len(self.rows)
-            return ScreenResult(dirty=True)
-        if key == BUTTON_SELECT:
-            label, action = self.rows[self.sel]
-            if label == "Back":
-                return ScreenResult(pop=True)
-            if action:
-                action()
-                return ScreenResult(dirty=True)
-        if key == BUTTON_LEFT:
-            return ScreenResult(pop=True)
-        return ScreenResult(dirty=False)
+    def _toggle_ddti_thru(self):
+        """Toggle DDTi ALSA thru routing."""
+        if not self._router or not self._cfg:
+            return
+        val = not self._router.get_ddti_thru()
+        self._router.set_ddti_thru(val)
+        self._cfg.set("alsa_ddti_thru", val)
+        self._cfg.save()
 
     def render(self, draw: ImageDraw.ImageDraw, w: int, h: int) -> None:
         draw.rectangle((0,0,w-1,h-1), outline=1, fill=0)
         draw.text((4, 2), "MIDI Settings", fill=1)
         midi = getattr(self, "_midi", None)
-        ins = midi.get_inputs() if midi else []
-        outs = midi.get_outputs() if midi else []
+        router = getattr(self, "_router", None)
+        
         cur_in = midi.get_selected_in() if midi else "-"
         cur_out = midi.get_selected_out() if midi else "-"
-        thru = midi.get_thru() if midi else False
+        kb_thru = router.get_keyboard_thru() if router else False
+        ddti_thru = router.get_ddti_thru() if router else True
         
         body = [
             f"Chord In:  {cur_in if cur_in else '-'}",
             f"Chord Out: {cur_out if cur_out else '-'}",
-            f"MIDI Thru: {'On' if thru else 'Off'}",
+            f"KB Thru:   {'On' if kb_thru else 'Off'}",
+            f"DDTi Thru: {'On' if ddti_thru else 'Off'}",
             "Back",
         ]
         y = 14
@@ -446,13 +415,14 @@ class ShutdownConfirmScreen(Screen):
         draw.text(((w - text_w) // 2, h // 2 - 6), question, fill=1)
 
 class Menu:
-    def __init__(self, midi_adapter=None, config=None, chord_capture=None, neokey=None):
+    def __init__(self, midi_adapter=None, config=None, chord_capture=None, neokey=None, alsa_router=None):
         self._stack: List[Screen] = [HomeScreen()]
         self.dirty = True
         self.midi = midi_adapter
         self.cfg = config
         self.chord_capture = chord_capture
         self.neokey = neokey
+        self.alsa_router = alsa_router
         
         # Long press detection for shutdown
         self._back_press_start = None
@@ -477,8 +447,8 @@ class Menu:
         return self._stack[-1]
 
     def push(self, screen: Screen):
-        if isinstance(screen, MidiSettingsScreen) and self.midi is not None:
-            screen.attach(self.midi, self.cfg)
+        if isinstance(screen, MidiSettingsScreen):
+            screen.attach(self.midi, self.cfg, self.alsa_router)
         elif isinstance(screen, UtilitiesScreen):
             screen.attach(self.chord_capture, self.cfg, self.neokey)
         elif isinstance(screen, HomeScreen) and self.chord_capture:

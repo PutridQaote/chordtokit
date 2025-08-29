@@ -11,6 +11,7 @@ from ui.menu import Menu, ChordCaptureScreen
 from features.chord_capture import ChordCapture
 
 import subprocess
+from hw.alsa_router import AlsaRouter
 
 def main():
 
@@ -42,8 +43,17 @@ def main():
     octave_down = bool(cfg.get("octave_down_lowest", False))
     chord_capture = ChordCapture(midi, allow_duplicates=allow_dupes, octave_down_lowest=octave_down)
 
-    # Pass neokey to menu for LED control
-    menu = Menu(midi_adapter=midi, config=cfg, chord_capture=chord_capture, neokey=nk)
+    # Initialize ALSA router for hardware-level MIDI routing
+    alsa_router = AlsaRouter()
+    
+    # Load settings and apply initial routing
+    alsa_router.set_keyboard_thru(bool(cfg.get("alsa_keyboard_thru", False)))
+    alsa_router.set_ddti_thru(bool(cfg.get("alsa_ddti_thru", True)))
+    alsa_router.ensure_baseline_routes()
+
+    # Pass router to menu
+    menu = Menu(midi_adapter=midi, config=cfg, chord_capture=chord_capture, 
+               neokey=nk, alsa_router=alsa_router)
 
     # Set chord_capture reference for the home screen
     if hasattr(menu._stack[0], '_chord_capture'):
@@ -54,6 +64,9 @@ def main():
     oled.show(img)
     menu.dirty = False
 
+    # Add periodic reconciliation (every 5 seconds)
+    last_reconcile = time.monotonic()
+    
     try:
         while True:
             # Read events more frequently - check multiple times per loop
@@ -94,9 +107,18 @@ def main():
                 oled.show(img)
                 menu.dirty = False
 
+            # Periodic route reconciliation for device hotplug
+            now = time.monotonic()
+            if now - last_reconcile > 5.0:  # Every 5 seconds
+                alsa_router._reconcile_routes()
+                last_reconcile = now
+
             time.sleep(0.002)  # Slightly increased sleep to balance CPU usage
     except KeyboardInterrupt:
         pass
+    finally:
+        # Clean up ALSA connections on exit
+        alsa_router.cleanup_managed_connections()
 
 if __name__ == "__main__":
     main()
