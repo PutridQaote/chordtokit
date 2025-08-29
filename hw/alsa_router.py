@@ -229,3 +229,12 @@ class AlsaRouter:
         """Remove all connections we created."""
         for src, dst in list(self._managed_connections):
             self.remove_connection(src, dst)
+    def debug_discovered_ports(self):
+        """Print discovered ports for debugging."""
+        ports = self.discover_ports()
+        print("=== ALSA Port Discovery ===")
+        for category, port_list in ports.items():
+            print(f"{category.upper()}:")
+            for port in port_list:
+                print(f"  {port.address} - {port.client_name}: {port.port_name}")
+        print("===========================")
