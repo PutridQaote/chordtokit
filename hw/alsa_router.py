@@ -7,10 +7,6 @@ import subprocess
 from typing import Dict, List, Optional, Set, Tuple
 from dataclasses import dataclass
 
-from typing import TYPE_CHECKING
-if TYPE_CHECKING:
-    from hw.midi_filter import MidiFilter
-
 @dataclass
 class AlsaPort:
     client_id: int
@@ -27,7 +23,7 @@ class AlsaRouter:
         self._managed_connections: Set[Tuple[str, str]] = set()
         self._keyboard_thru_enabled = False
         self._ddti_thru_enabled = True  # Default ON
-        self._midi_filters: Dict[str, 'MidiFilter'] = {}  # Track active filters
+        self._midi_filters: Dict[str, any] = {}  # Track active filters
         
     def discover_ports(self) -> Dict[str, List[AlsaPort]]:
         """Discover ALSA MIDI ports, categorized by type."""
@@ -217,12 +213,11 @@ class AlsaRouter:
     def _create_filtered_connection(self, src_port: AlsaPort, dst_port: AlsaPort) -> bool:
         """Create a filtered MIDI connection that blocks Program Change messages."""
         try:
+            # Import MidiFilter here at runtime
+            from hw.midi_filter import MidiFilter
+            
             # Create filter instance
             filter_key = f"{src_port.address}->{dst_port.address}"
-            
-            # Convert ALSA addresses to mido port names
-            src_name = f"{src_port.client_name}:{src_port.client_name} MIDI 1 {src_port.address}"
-            dst_name = f"{dst_port.client_name}:{dst_port.client_name} MIDI 1 {dst_port.address}"
             
             # Try to find the actual mido port names
             import mido
