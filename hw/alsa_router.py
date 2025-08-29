@@ -7,6 +7,10 @@ import subprocess
 from typing import Dict, List, Optional, Set, Tuple
 from dataclasses import dataclass
 
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from hw.midi_filter import MidiFilter
+
 @dataclass
 class AlsaPort:
     client_id: int
@@ -23,6 +27,7 @@ class AlsaRouter:
         self._managed_connections: Set[Tuple[str, str]] = set()
         self._keyboard_thru_enabled = False
         self._ddti_thru_enabled = True  # Default ON
+        self._midi_filters: Dict[str, 'MidiFilter'] = {}  # Track active filters
         
     def discover_ports(self) -> Dict[str, List[AlsaPort]]:
         """Discover ALSA MIDI ports, categorized by type."""
@@ -209,6 +214,65 @@ class AlsaRouter:
     def get_ddti_thru(self) -> bool:
         return self._ddti_thru_enabled
     
+    def _create_filtered_connection(self, src_port: AlsaPort, dst_port: AlsaPort) -> bool:
+        """Create a filtered MIDI connection that blocks Program Change messages."""
+        try:
+            # Create filter instance
+            filter_key = f"{src_port.address}->{dst_port.address}"
+            
+            # Convert ALSA addresses to mido port names
+            src_name = f"{src_port.client_name}:{src_port.client_name} MIDI 1 {src_port.address}"
+            dst_name = f"{dst_port.client_name}:{dst_port.client_name} MIDI 1 {dst_port.address}"
+            
+            # Try to find the actual mido port names
+            import mido
+            available_inputs = mido.get_input_names()
+            available_outputs = mido.get_output_names()
+            
+            # Find matching input port
+            src_mido_name = None
+            for name in available_inputs:
+                if src_port.client_name.lower() in name.lower():
+                    src_mido_name = name
+                    break
+                    
+            # Find matching output port  
+            dst_mido_name = None
+            for name in available_outputs:
+                if dst_port.client_name.lower() in name.lower():
+                    dst_mido_name = name
+                    break
+                    
+            if not src_mido_name or not dst_mido_name:
+                print(f"Could not find mido port names for {src_port.client_name} -> {dst_port.client_name}")
+                return False
+                
+            # Create and start filter
+            midi_filter = MidiFilter(src_mido_name, dst_mido_name)
+            if midi_filter.start():
+                self._midi_filters[filter_key] = midi_filter
+                self._managed_connections.add((src_port.address, dst_port.address))
+                print(f"Created filtered MIDI connection: {src_port.address} -> {dst_port.address} (no PC)")
+                return True
+            else:
+                return False
+                
+        except Exception as e:
+            print(f"Error creating filtered connection {src_port.address} -> {dst_port.address}: {e}")
+            return False
+    
+    def _remove_filtered_connection(self, src: str, dst: str) -> bool:
+        """Remove a filtered MIDI connection."""
+        filter_key = f"{src}->{dst}"
+        
+        if filter_key in self._midi_filters:
+            self._midi_filters[filter_key].stop()
+            del self._midi_filters[filter_key]
+            self._managed_connections.discard((src, dst))
+            print(f"Removed filtered MIDI connection: {src} -> {dst}")
+            return True
+        return False
+    
     def _reconcile_routes(self):
         """Reconcile desired routes with actual ALSA connections."""
         ports = self.discover_ports()
@@ -220,15 +284,17 @@ class AlsaRouter:
         if not external_ports:
             return  # No external devices to route to
             
-        # Handle DDTi thru routes
+        # Handle DDTi thru routes (with Program Change filtering)
         for ddti_port in ddti_ports:
             for ext_port in external_ports:
                 if self._ddti_thru_enabled:
-                    self.create_connection(ddti_port.address, ext_port.address)
+                    # Use filtered connection for DDTi -> External (blocks Program Change)
+                    self._create_filtered_connection(ddti_port, ext_port)
                 else:
-                    self.remove_connection(ddti_port.address, ext_port.address)
+                    # Remove filtered connection
+                    self._remove_filtered_connection(ddti_port.address, ext_port.address)
         
-        # Handle keyboard thru routes
+        # Handle keyboard thru routes (no filtering needed - direct ALSA connection)
         for kb_port in keyboard_ports:
             for ext_port in external_ports:
                 if self._keyboard_thru_enabled:
@@ -242,8 +308,15 @@ class AlsaRouter:
     
     def cleanup_managed_connections(self):
         """Remove all connections we created."""
+        # Clean up filtered connections first
+        for filter_key, midi_filter in list(self._midi_filters.items()):
+            midi_filter.stop()
+        self._midi_filters.clear()
+        
+        # Clean up direct ALSA connections
         for src, dst in list(self._managed_connections):
             self.remove_connection(src, dst)
+    
     def debug_discovered_ports(self):
         """Print discovered ports for debugging."""
         ports = self.discover_ports()
