@@ -31,6 +31,19 @@ class AlsaRouter:
             result = subprocess.run(['aconnect', '-l'], 
                                   capture_output=True, text=True, check=True)
             return self._parse_aconnect_output(result.stdout)
+        except subprocess.CalledProcessError as e:
+            # aconnect can fail temporarily during device changes
+            print(f"aconnect command failed (exit {e.returncode}), retrying...")
+            # Try once more after a brief delay
+            import time
+            time.sleep(0.1)
+            try:
+                result = subprocess.run(['aconnect', '-l'], 
+                                      capture_output=True, text=True, check=True)
+                return self._parse_aconnect_output(result.stdout)
+            except Exception:
+                # If it still fails, return empty
+                return {"keyboard": [], "ddti": [], "external": []}
         except Exception as e:
             print(f"Error discovering ALSA ports: {e}")
             return {"keyboard": [], "ddti": [], "external": []}
@@ -213,11 +226,14 @@ class AlsaRouter:
     def _create_filtered_connection(self, src_port: AlsaPort, dst_port: AlsaPort) -> bool:
         """Create a filtered MIDI connection that blocks Program Change messages."""
         try:
+            # Check if we already have a filter for this connection
+            filter_key = f"{src_port.address}->{dst_port.address}"
+            if filter_key in self._midi_filters:
+                # Filter already exists and is running
+                return True
+                
             # Import MidiFilter here at runtime
             from hw.midi_filter import MidiFilter
-            
-            # Create filter instance
-            filter_key = f"{src_port.address}->{dst_port.address}"
             
             # Try to find the actual mido port names
             import mido
