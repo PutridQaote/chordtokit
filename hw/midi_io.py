@@ -100,6 +100,35 @@ class Midi:
         self.close_ports()
         self.open_ports()
 
+    # ----- Menu API (for settings screen) -----
+    def get_inputs(self) -> List[str]:
+        """Get list of available input port names."""
+        all_ins = mido.get_input_names()
+        return [name for name in _dedupe(all_ins) if not _is_virtual_through(name)]
+
+    def get_outputs(self) -> List[str]:
+        """Get list of available output port names."""
+        all_outs = mido.get_output_names()
+        return [name for name in _dedupe(all_outs) if not _is_virtual_through(name)]
+
+    def get_selected_in(self) -> Optional[str]:
+        """Get currently selected input port name."""
+        return self._in_name
+
+    def get_selected_out(self) -> Optional[str]:
+        """Get currently selected output port name."""
+        return self._out_name
+
+    def set_in(self, name: str):
+        """Set input port by name and reopen."""
+        self._in_name = name
+        self.reopen_ports()
+
+    def set_out(self, name: str):
+        """Set output port by name and reopen."""
+        self._out_name = name
+        self.reopen_ports()
+
     # ----- Runtime I/O -----
     def iter_input(self):
         """Get pending MIDI input messages (no thru handling)."""

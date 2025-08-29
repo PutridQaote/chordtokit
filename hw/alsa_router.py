@@ -82,12 +82,27 @@ class AlsaRouter:
         return any(pattern in client_name.lower() for pattern in patterns)
     
     def _is_external_device(self, client_name: str) -> bool:
-        """Identify external MIDI devices (not keyboard, not DDTi)."""
+        """Identify external MIDI devices (not keyboard, not DDTi, not virtual)."""
         if self._is_keyboard(client_name) or self._is_ddti(client_name):
             return False
-        # Look for USB MIDI devices that aren't system clients
-        return any(pattern in client_name.lower() for pattern in 
-                  ["um-one", "usb", "midi", "roland", "yamaha", "korg"])
+        
+        # Exclude virtual and problematic clients
+        exclude_patterns = [
+            "rtmidi",           # RtMidi clients
+            "midi through",     # ALSA through ports
+            "through",          # Generic through ports
+            "system",           # System clients
+            "timer",            # Timer clients
+            "announce",         # Announce clients
+        ]
+        
+        for pattern in exclude_patterns:
+            if pattern in client_name.lower():
+                return False
+        
+        # Look for real USB MIDI devices
+        include_patterns = ["um-one", "usb", "roland", "yamaha", "korg", "akai", "novation"]
+        return any(pattern in client_name.lower() for pattern in include_patterns)
     
     def get_existing_connections(self) -> Set[Tuple[str, str]]:
         """Get all existing ALSA connections."""
