@@ -316,6 +316,44 @@ class MidiSettingsScreen(Screen):
         self._cfg = config
         self._router = alsa_router
 
+    def _cycle_in(self):
+        """Cycle through available MIDI input ports."""
+        if not hasattr(self, "_midi") or not self._midi:
+            return
+        inputs = self._midi.get_inputs()
+        if not inputs:
+            return
+        current = self._midi.get_selected_in()
+        try:
+            idx = inputs.index(current) if current in inputs else -1
+        except ValueError:
+            idx = -1
+        next_idx = (idx + 1) % len(inputs)
+        new_input = inputs[next_idx]
+        self._midi.set_in(new_input)
+        # persist
+        self._cfg.set("midi_in_name", new_input)
+        self._cfg.save()
+
+    def _cycle_out(self):
+        """Cycle through available MIDI output ports."""
+        if not hasattr(self, "_midi") or not self._midi:
+            return
+        outputs = self._midi.get_outputs()
+        if not outputs:
+            return
+        current = self._midi.get_selected_out()
+        try:
+            idx = outputs.index(current) if current in outputs else -1
+        except ValueError:
+            idx = -1
+        next_idx = (idx + 1) % len(outputs)
+        new_output = outputs[next_idx]
+        self._midi.set_out(new_output)
+        # persist
+        self._cfg.set("midi_out_name", new_output)
+        self._cfg.save()
+
     def _toggle_keyboard_thru(self):
         """Toggle keyboard ALSA thru routing."""
         if not self._router or not self._cfg:
@@ -333,6 +371,24 @@ class MidiSettingsScreen(Screen):
         self._router.set_ddti_thru(val)
         self._cfg.set("alsa_ddti_thru", val)
         self._cfg.save()
+
+    def on_key(self, key: int) -> ScreenResult:
+        if key == BUTTON_UP:
+            self.sel = (self.sel - 1) % len(self.rows)
+            return ScreenResult(dirty=True)
+        if key == BUTTON_DOWN:
+            self.sel = (self.sel + 1) % len(self.rows)
+            return ScreenResult(dirty=True)
+        if key == BUTTON_SELECT:
+            _, action = self.rows[self.sel]
+            if action is None:  # "Back"
+                return ScreenResult(pop=True)
+            else:
+                action()  # call the function
+                return ScreenResult(dirty=True)
+        if key == BUTTON_LEFT:  # Back
+            return ScreenResult(pop=True)
+        return ScreenResult(dirty=False)
 
     def render(self, draw: ImageDraw.ImageDraw, w: int, h: int) -> None:
         draw.rectangle((0,0,w-1,h-1), outline=1, fill=0)

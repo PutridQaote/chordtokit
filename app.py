@@ -46,9 +46,15 @@ def main():
     # Initialize ALSA router for hardware-level MIDI routing
     alsa_router = AlsaRouter()
     
+    # Debug: see what ports are discovered
+    alsa_router.debug_discovered_ports()
+    
     # Load settings and apply initial routing
     alsa_router.set_keyboard_thru(bool(cfg.get("alsa_keyboard_thru", False)))
     alsa_router.set_ddti_thru(bool(cfg.get("alsa_ddti_thru", True)))
+    
+    # Wait a moment for ports to settle, then establish routes
+    time.sleep(1)
     alsa_router.ensure_baseline_routes()
 
     # Pass router to menu

@@ -94,29 +94,51 @@ class AlsaRouter:
         connections = set()
         try:
             result = subprocess.run(['aconnect', '-l'], 
-                                  capture_output=True, text=True, check=True)
+                              capture_output=True, text=True, check=True)
             
             current_client = None
             for line in result.stdout.strip().split('\n'):
                 # Match client line
                 client_match = re.match(r'client\s+(\d+):\s+\'([^\']+)\'', line)
                 if client_match:
-                    current_client = f"{client_match.group(1)}:0"  # Assume port 0
+                    current_client = client_match.group(1)
                     continue
-                    
+                
+                # Match port line with connections
+                port_match = re.match(r'\s+(\d+)\s+\'([^\']+)\'', line)
+                if port_match and current_client:
+                    port_id = port_match.group(1)
+                    src_address = f"{current_client}:{port_id}"
+                    continue
+                
                 # Match connection line: "	Connecting To: 20:0"
                 conn_match = re.match(r'\s+Connecting To:\s+(\d+:\d+)', line)
                 if conn_match and current_client:
-                    connections.add((current_client, conn_match.group(1)))
-                    
+                    src_address = f"{current_client}:0"  # Use the current client
+                    connections.add((src_address, conn_match.group(1)))
+                
         except Exception as e:
             print(f"Error getting existing connections: {e}")
-            
+        
         return connections
     
     def create_connection(self, src: str, dst: str) -> bool:
         """Create an ALSA connection if it doesn't exist."""
         try:
+            # Verify both ports exist first
+            ports = self.discover_ports()
+            all_ports = ports["keyboard"] + ports["ddti"] + ports["external"]
+            
+            src_exists = any(p.address == src for p in all_ports)
+            dst_exists = any(p.address == dst for p in all_ports)
+            
+            if not src_exists:
+                print(f"Source port {src} not found")
+                return False
+            if not dst_exists:
+                print(f"Destination port {dst} not found")
+                return False
+                
             # Check if connection already exists
             existing = self.get_existing_connections()
             if (src, dst) in existing:
@@ -127,6 +149,9 @@ class AlsaRouter:
             self._managed_connections.add((src, dst))
             print(f"Created ALSA connection: {src} -> {dst}")
             return True
+        except subprocess.CalledProcessError as e:
+            # Don't spam errors for expected failures
+            return False
         except Exception as e:
             print(f"Error creating connection {src} -> {dst}: {e}")
             return False
@@ -138,6 +163,10 @@ class AlsaRouter:
                           capture_output=True, check=True)
             self._managed_connections.discard((src, dst))
             print(f"Removed ALSA connection: {src} -> {dst}")
+            return True
+        except subprocess.CalledProcessError:
+            # Connection probably doesn't exist, which is fine
+            self._managed_connections.discard((src, dst))
             return True
         except Exception as e:
             print(f"Error removing connection {src} -> {dst}: {e}")
