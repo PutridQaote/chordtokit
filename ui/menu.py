@@ -1175,16 +1175,26 @@ class Menu:
             self.push(ShutdownConfirmScreen(neokey=self.neokey))
             return True
         
-        # Handle ChordCaptureScreen and SingleNoteCaptureScreen updates
         top = self._top()
-        if isinstance(top, (ChordCaptureScreen, SingleNoteCaptureScreen)):
-            result = top.update()
-            if result.pop:
-                self.pop()
-                return True
-            if result.dirty:
-                self.dirty = True
-                
+        
+        # OLD:
+        # if isinstance(top, (ChordCaptureScreen, SingleNoteCaptureScreen)):
+        #     result = top.update()
+        # NEW: update any screen that implements update()
+        if hasattr(top, "update"):
+            try:
+                result = top.update()
+            except Exception as e:
+                print(f"Screen update error ({top.__class__.__name__}): {e}")
+                return False
+            else:
+                if isinstance(result, ScreenResult):
+                    if result.pop:
+                        self.pop()
+                        return True
+                    if result.dirty:
+                        self.dirty = True
+        
         return False
 
     # --- Rendering helpers ---
