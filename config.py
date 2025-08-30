@@ -28,7 +28,7 @@ DEFAULTS: Dict[str, Any] = {
 
     # Spiral animation settings for each capture mode
     "spiral_turns_4_note": 20,    # Default turns for 4-note capture
-    "spiral_turns_single": 5,     # Default turns for single-note capture
+    "spiral_turns_single": 16,     # Default turns for single-note capture
 
     # Footswitch (so you can flip NO/NC without editing code)
     "footswitch_active_low": True,

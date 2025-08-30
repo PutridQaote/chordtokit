@@ -33,6 +33,9 @@ class ChordCapture:
         self.last_note_time = 0.0
         self.active = False
 
+        # DDTi state tracking
+        self.last_sent_chord: Optional[List[int]] = None
+
     def set_allow_duplicates(self, allow: bool):
         """Change duplicate policy and clear bucket."""
         self.allow_duplicates = allow
@@ -117,17 +120,17 @@ class ChordCapture:
                 chord = sorted(list(OrderedDict.fromkeys(self.bucket)))[:self.max_notes]
             
             if len(chord) == self.max_notes:
-                # Apply octave down to lowest note if enabled
                 final_chord = self._apply_octave_down(chord) if self.octave_down_lowest else chord
-                print(f"Captured chord: {chord}")
-                if self.octave_down_lowest:
-                    print(f"After octave down: {final_chord}")
                 
-                # Send SysEx to DDTi
+                # Send SysEx using new DDTi interface
                 try:
-                    sysex_msg = self.ddti.build_sysex(final_chord)
+                    sysex_msg = self.ddti.build_full_sysex(final_chord)
                     self.midi.send(sysex_msg)
-                    print(f"Sent SysEx: {len(sysex_msg.data)} bytes")
+                    print(f"Sent full SysEx: {len(sysex_msg.data)} bytes")
+                    
+                    # The DDTi class now tracks its own state
+                    self.last_sent_chord = self.ddti.get_current_state()
+                    
                 except Exception as e:
                     print(f"Error sending SysEx: {e}")
                 

@@ -469,51 +469,97 @@ class SingleNoteCaptureScreen(BaseCaptureScreen):
         try:
             from features.ddti import DDTi
             ddti = DDTi()
-            # Get the current 4-note set you intend to send. If you track it elsewhere, use that.
-            # Fallback: read prior notes from your own last chord buffer:
-            current = getattr(self.chord_capture, "last_notes", [60, 64, 67, 72])  # placeholder fallback
+            
+            # Get the current DDTi configuration by reading the last sent chord
+            # We need to track the actual DDTi state, not use a hardcoded fallback
+            if hasattr(self.chord_capture, "last_sent_chord"):
+                current = list(self.chord_capture.last_sent_chord)
+                print(f"Using last sent chord: {current}")
+            else:
+                # If we don't have the last chord, we can't safely do single-note changes
+                print("ERROR: No last chord available - cannot determine current DDTi state")
+                print("Please capture a 4-note chord first to establish DDTi state")
+                return
 
             # Find the index to replace by matching the trigger note
             try:
                 idx = current.index(self.captured_trigger_note)
+                print(f"Found trigger note {self.captured_trigger_note} at index {idx}")
             except ValueError:
-                # If the exact note isn't present, choose a sensible default (e.g., slot 0)
-                idx = 0
+                print(f"ERROR: Trigger note {self.captured_trigger_note} not found in current chord {current}")
+                print("DDTi state may have changed - please capture a 4-note chord to resync")
+                return
 
             old = current[idx]
             current[idx] = self.captured_keyboard_note
-            print(f"Changing trigger {idx} from {note_to_name(old)} to {note_to_name(self.captured_keyboard_note)}")
+            print(f"Changing trigger {idx} from {note_to_name(old)} ({old}) to {note_to_name(self.captured_keyboard_note)} ({self.captured_keyboard_note})")
+            print(f"Full chord change: {[old if i != idx else self.captured_keyboard_note for i, old in enumerate(current)]} -> {current}")
 
             # Build + send
-            from mido import Message
             msg = ddti.build_sysex(current)
             sent = self.chord_capture.midi.send(msg)
             if sent:
-                print(f"Sent single-note SysEx: {len(msg.bin()) if hasattr(msg, 'bin') else 'OK'}")
+                print(f"Sent single-note SysEx: {len(msg.data)} bytes")
+                # Update the chord_capture's last sent chord
+                self.chord_capture.last_sent_chord = current[:]
             else:
                 print("Failed to send SysEx (MIDI out not open?)")
         except Exception as e:
             print(f"single-note SysEx error: {e}")
     
-    def render(self, draw: ImageDraw.ImageDraw, w: int, h: int) -> None:
-        # Use base class frame rendering
-        if not self._render_base_frame(draw, w, h):
-            return  # Inactive, base class handled it
+    def on_key(self, key: int) -> ScreenResult:
+        """Handle back button to exit single-note capture."""
+        if key == BUTTON_LEFT:  # Back button - abort capture
+            self.deactivate()
+            return ScreenResult(pop=True)
+        elif key == BUTTON_UP:  # Increase spiral turns
+            self.turns = min(50, self.turns + 1)
+            self._save_turns_to_config()
+            print(f"Spiral turns increased to {self.turns}")
+            return ScreenResult(dirty=True)
+        elif key == BUTTON_DOWN:  # Decrease spiral turns
+            self.turns = max(1, self.turns - 1)
+            self._save_turns_to_config()
+            print(f"Spiral turns decreased to {self.turns}")
+            return ScreenResult(dirty=True)
+        return ScreenResult(dirty=False)
     
-        # Show trigger note on the right middle - specific to single-note mode
-        if self.captured_trigger_note is not None:
-            trigger_text = f"{note_to_name(self.captured_trigger_note)}"
-            draw.text(self.trigger_position, trigger_text, fill=1)
-        
-        # Show keyboard note on the left middle - specific to single-note mode
-        if self.captured_keyboard_note is not None:
-            keyboard_text = f"{note_to_name(self.captured_keyboard_note)}"
-            draw.text(self.keyboard_position, keyboard_text, fill=1)
-    
-        # Show "LISTEN" if we haven't completed capture
-        if not self.completion_time:
-            self._draw_listen_text(draw, w, h)
+# New capture mode that would use the enhanced DDTi interface
 
+class VariableTriggerCaptureScreen(BaseCaptureScreen):
+    def __init__(self, chord_capture, config=None):
+        super().__init__(chord_capture, turns=15, 
+                        config_key="spiral_turns_variable", config=config)
+        
+        # Variable-trigger state
+        self.captured_triggers: List[int] = []  # DDTi notes that were hit
+        self.captured_keyboard_notes: List[int] = []  # Keyboard notes to assign
+        self.trigger_capture_phase = True  # True = capturing triggers, False = capturing keyboard
+        
+    def _send_variable_trigger_change(self):
+        """Send SysEx for variable number of triggers."""
+        if not self.captured_triggers or not self.captured_keyboard_notes:
+            return
+        
+        if len(self.captured_triggers) != len(self.captured_keyboard_notes):
+            print("Error: Trigger and keyboard note counts don't match")
+            return
+            
+        try:
+            # Use the new variable-trigger method
+            sysex_msg = self.chord_capture.ddti.build_trigger_change_sysex(
+                self.captured_triggers, self.captured_keyboard_notes
+            )
+            sent = self.chord_capture.midi.send(sysex_msg)
+            
+            if sent:
+                print(f"Updated {len(self.captured_triggers)} triggers with variable SysEx")
+                for trigger, note in zip(self.captured_triggers, self.captured_keyboard_notes):
+                    print(f"  Trigger {note_to_name(trigger)} -> {note_to_name(note)}")
+            
+        except Exception as e:
+            print(f"Variable-trigger SysEx error: {e}")
+    
 class UtilitiesScreen(Screen):
     def __init__(self):
         self.rows = [
