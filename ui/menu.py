@@ -700,7 +700,6 @@ class DDTiSyncScreen(Screen):
         self._status = "Waiting for dump..."
         self._last_notes = None
         self._start_ts = time.monotonic()
-        self._ddti_in = None
         self._sysex_count = 0  # Track received SysEx messages
         self._debug_messages = []  # Store recent debug messages for display
 
@@ -714,63 +713,18 @@ class DDTiSyncScreen(Screen):
         if len(self._debug_messages) > 5:
             self._debug_messages.pop(0)
 
-    def _activate_monitoring(self):
-        """Start monitoring DDTi port for incoming SysEx - EXACTLY like the working script."""
-        import mido
-        
-        # Use the EXACT same method as the working ddti_capture_sysex.py script
-        ddti_port = None
-        all_inputs = mido.get_input_names()
-        self._add_debug(f"All inputs: {len(all_inputs)} ports")
-        
-        for name in all_inputs:
-            if any(k in name.lower() for k in ["triggerio", "ddti", "ddrum"]):
-                ddti_port = name
-                break
-        
-        self._add_debug(f"Found DDTi port: {ddti_port}")
-        
-        if ddti_port:
-            try:
-                # Close any existing connection first
-                if self._ddti_in:
-                    try:
-                        self._ddti_in.close()
-                    except:
-                        pass
-                
-                self._ddti_in = mido.open_input(ddti_port)
-                self._add_debug("✓ Monitoring active")
-                return True
-            except Exception as e:
-                self._add_debug(f"✗ Open failed: {e}")
-                self._ddti_in = None
-                return False
-        else:
-            self._add_debug("✗ No DDTi port found")
-        return False
-
-    def _deactivate_monitoring(self):
-        """Stop monitoring DDTi port."""
-        if self._ddti_in:
-            try:
-                self._ddti_in.close()
-                self._add_debug("✓ Monitoring closed")
-            except Exception as e:
-                self._add_debug(f"Close error: {e}")
-            self._ddti_in = None
-
     def render(self, draw: ImageDraw.ImageDraw, w: int, h: int) -> None:
         draw.rectangle((0,0,w-1,h-1), outline=1, fill=0)
         draw.text((4,2), "DDTi Sync", fill=1)
         
         y = 14
         
-        # Show connection status
-        if self._ddti_in:
-            draw.text((4, y), "Connected ✓", fill=1)
+        # Show connection status - we're using the main app's MIDI system
+        out_port = self._cc.midi.get_out_port_name()
+        if out_port and "triggerio" in out_port.lower():
+            draw.text((4, y), "Using main MIDI ✓", fill=1)
         else:
-            draw.text((4, y), "Not connected ✗", fill=1)
+            draw.text((4, y), "No DDTi port ✗", fill=1)
         y += 10
         
         # Show SysEx count
@@ -805,19 +759,13 @@ class DDTiSyncScreen(Screen):
 
     def on_key(self, key: int) -> ScreenResult:
         if key == BUTTON_LEFT:
-            self._deactivate_monitoring()
             return ScreenResult(pop=True)
         if key == BUTTON_SELECT and self._done:
-            self._deactivate_monitoring()
             return ScreenResult(pop=True)
         if key == BUTTON_UP and not self._done:
-            # Manual trigger to restart monitoring
-            self._add_debug("Manual restart")
-            self._deactivate_monitoring()
-            if self._activate_monitoring():
-                self._status = "Restarted"
-            else:
-                self._status = "Restart failed"
+            # Clear SysEx count for debugging
+            self._sysex_count = 0
+            self._add_debug("Reset counter")
             return ScreenResult(dirty=True)
         if key == BUTTON_DOWN and not self._done:
             # Debug: show current DDTi state
@@ -830,13 +778,12 @@ class DDTiSyncScreen(Screen):
         return ScreenResult(dirty=False)
 
     def update(self) -> ScreenResult:
-        # Start monitoring on first update if not already started
-        if not self._ddti_in and not self._done:
-            self._activate_monitoring()
-            
-        # Process incoming SysEx messages - EXACTLY like the working script
-        if self._ddti_in:
-            messages = list(self._ddti_in.iter_pending())
+        # Process incoming SysEx messages from the main MIDI system
+        # The key insight: we need to tap into the main app's MIDI input, not open our own
+        
+        # Check if the main MIDI input has any messages
+        if hasattr(self._cc.midi, '_in_port') and self._cc.midi._in_port:
+            messages = list(self._cc.midi._in_port.iter_pending())
             
             for msg in messages:
                 if msg.type == 'sysex':
@@ -857,10 +804,10 @@ class DDTiSyncScreen(Screen):
                         
                     except Exception as e:
                         self._add_debug(f"Ingest error: {e}")
-                        
-                elif msg.type in ['note_on', 'note_off']:
-                    # Log note messages for context (but don't spam)
-                    pass
+        else:
+            # No MIDI input port available
+            if time.monotonic() - self._start_ts > 2.0:  # Only show after 2 seconds
+                self._add_debug("No MIDI input port")
         
         # Check if we successfully captured kit0
         if not self._done and self._cc.ddti.have_kit0_bulk():
