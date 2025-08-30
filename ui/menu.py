@@ -760,45 +760,50 @@ class SingleNoteCaptureScreen(BaseCaptureScreen):
         self.captured_keyboard_note = None
         self.waiting_for_trigger = True
         
-        # Flush any pending messages from both sources
+        # Flush any pending messages
         flushed_messages = list(self.chord_capture.midi.iter_input())
         if flushed_messages:
-            print(f"Flushed {len(flushed_messages)} stale keyboard MIDI messages")
-            
-        # Also clear any DDTi tap messages
-        if self.chord_capture.midi._ddti_tap:
-            self.chord_capture.midi._ddti_tap.get_recent_notes(0.1)  # Clear recent messages
+            print(f"Flushed {len(flushed_messages)} stale MIDI messages")
         
     def update(self) -> ScreenResult:
-        """Check for captured notes from separate sources."""
+        """Check for captured notes from different MIDI channels."""
         if not self.active:
             return ScreenResult(dirty=False)
         
-        # Check for DDTi trigger notes (from DDTi output)
-        if self.waiting_for_trigger:
-            ddti_note = self.chord_capture.midi.get_ddti_latest_note()
-            if ddti_note is not None:
-                self.captured_trigger_note = ddti_note
-                self.waiting_for_trigger = False
-                print(f"Captured DDTi trigger note: {note_to_name(ddti_note)} ({ddti_note})")
+        # Process all incoming MIDI messages
+        all_messages = list(self.chord_capture.midi.iter_input())
         
-        # Check for keyboard input notes (from keyboard input)
-        if not self.waiting_for_trigger and self.captured_keyboard_note is None:
-            keyboard_messages = list(self.chord_capture.midi.iter_input())
-            for msg in keyboard_messages:
-                if msg.type == 'note_on' and msg.velocity > 0:
+        for msg in all_messages:
+            if msg.type == 'note_on' and msg.velocity > 0:
+                # Check MIDI channel to determine source
+                if self.waiting_for_trigger and self._is_ddti_message(msg):
+                    # DDTi trigger note (channel 10)
+                    self.captured_trigger_note = msg.note
+                    self.waiting_for_trigger = False
+                    print(f"Captured DDTi trigger note: {note_to_name(msg.note)} ({msg.note}) on channel {msg.channel + 1}")
+                    
+                elif not self.waiting_for_trigger and self.captured_keyboard_note is None and self._is_keyboard_message(msg):
+                    # Keyboard note (any channel except 10)
                     self.captured_keyboard_note = msg.note
-                    print(f"Captured keyboard note: {note_to_name(msg.note)} ({msg.note})")
+                    print(f"Captured keyboard note: {note_to_name(msg.note)} ({msg.note}) on channel {msg.channel + 1}")
                     
                     # Send the single note change
                     self._send_single_note_change()
                     
                     # Start completion timer
                     self.completion_time = time.monotonic()
-                    break  # Only capture the first note
+                    break  # Only capture the first keyboard note
         
         # Call base class update for common completion logic
         return super().update()
+    
+    def _is_ddti_message(self, msg) -> bool:
+        """Determine if a MIDI message came from DDTi (channel 10)."""
+        return msg.channel == 9  # Channel 10 is index 9 in 0-based numbering
+
+    def _is_keyboard_message(self, msg) -> bool:
+        """Determine if a MIDI message came from keyboard (not channel 10)."""
+        return msg.channel != 9  # Any channel except 10
     
     def _send_single_note_change(self):
         """Send SysEx to change just one trigger's note."""
@@ -807,17 +812,20 @@ class SingleNoteCaptureScreen(BaseCaptureScreen):
             
         try:
             # Map the trigger note to a trigger index (0-3)
+            # These are common DDTi default notes, but you can adjust based on your setup
             trigger_map = {
-                36: 0,  # Kick
-                38: 1,  # Snare  
-                42: 2,  # Hi-hat
-                49: 3,  # Crash
+                36: 0,  # Kick (C2)
+                38: 1,  # Snare (D2)  
+                42: 2,  # Hi-hat (F#2)
+                49: 3,  # Crash (C#3)
+                # Add more mappings as needed based on your DDTi configuration
             }
             
             # Find which trigger to modify, default to trigger 0
             trigger_index = trigger_map.get(self.captured_trigger_note, 0)
             
             # Create a chord with the new note at the specified trigger position
+            # Use your current DDTi configuration as the base
             default_chord = [36, 38, 42, 49]  # Kick, snare, hi-hat, crash
             new_chord = default_chord.copy()
             new_chord[trigger_index] = self.captured_keyboard_note
