@@ -564,10 +564,12 @@ class ChordCaptureMenuScreen(Screen):
         self.sel = 0
         self._chord_capture = None
         self._cfg = None
+        self._alsa_router = None  # Add this line
 
-    def attach(self, chord_capture, config):
+    def attach(self, chord_capture, config, alsa_router=None):  # Add alsa_router parameter
         self._chord_capture = chord_capture
         self._cfg = config
+        self._alsa_router = alsa_router  # Store router reference
 
     def _start_4_note_capture(self):
         """Start the traditional 4-note chord capture."""
@@ -584,7 +586,7 @@ class ChordCaptureMenuScreen(Screen):
             print("Menu: Starting single-note capture")
             screen = SingleNoteCaptureScreen(self._chord_capture)
             # Pass the ALSA router so it can manage keyboard routing
-            if hasattr(self, '_alsa_router'):
+            if self._alsa_router:  # Now this will work
                 screen.set_alsa_router(self._alsa_router)
             screen.activate()
             return ScreenResult(push=screen, dirty=True)
