@@ -700,8 +700,43 @@ class DDTiSyncScreen(Screen):
         self._status = "Waiting for dump..."
         self._last_notes = None
         self._start_ts = time.monotonic()
-        self._sysex_count = 0  # Track received SysEx messages
-        self._debug_messages = []  # Store recent debug messages for display
+        self._sysex_count = 0
+        self._debug_messages = []
+        # NEW: Add state for managing ALSA router
+        self._alsa_router = None
+        self._prev_ddti_thru = None
+
+    def attach(self, chord_capture, config, alsa_router=None):
+        """Attach shared objects to the screen."""
+        self._cc = chord_capture
+        self._alsa_router = alsa_router
+
+    def activate(self):
+        """Called when the screen becomes active. Temporarily disables DDTi thru."""
+        self._add_debug("Activating Sync...")
+        if self._alsa_router:
+            self._prev_ddti_thru = self._alsa_router.get_ddti_thru()
+            if self._prev_ddti_thru:
+                self._add_debug("Disabling DDTi thru")
+                self._alsa_router.set_ddti_thru(False)
+                time.sleep(0.2)  # Give filter thread time to die and release port
+        
+        # Now that the port is hopefully free, reopen MIDI ports
+        self._add_debug("Re-opening MIDI ports")
+        self._cc.midi.reopen_ports()
+
+    def deactivate(self):
+        """Called when the screen is closed. Restores DDTi thru."""
+        self._add_debug("Deactivating Sync...")
+        if self._alsa_router and self._prev_ddti_thru is not None:
+            if self._prev_ddti_thru:
+                self._add_debug("Restoring DDTi thru")
+                self._alsa_router.set_ddti_thru(True)
+            self._prev_ddti_thru = None
+        
+        # Reopen ports again to let the filter grab the port back
+        # and restore the main app's normal MIDI state.
+        self._cc.midi.reopen_ports()
 
     def _add_debug(self, msg: str):
         """Add a debug message with timestamp."""
@@ -759,8 +794,10 @@ class DDTiSyncScreen(Screen):
 
     def on_key(self, key: int) -> ScreenResult:
         if key == BUTTON_LEFT:
+            self.deactivate()  # Deactivate before popping
             return ScreenResult(pop=True)
         if key == BUTTON_SELECT and self._done:
+            self.deactivate()  # Deactivate before popping
             return ScreenResult(pop=True)
         if key == BUTTON_UP and not self._done:
             # Debug: show port status
@@ -1066,9 +1103,16 @@ class Menu:
         elif isinstance(screen, UtilitiesScreen):
             screen.attach(self.chord_capture, self.cfg, self.neokey)
         elif isinstance(screen, ChordCaptureMenuScreen):
-            screen.attach(self.chord_capture, self.cfg, self.alsa_router)  # Pass router
+            screen.attach(self.chord_capture, self.cfg, self.alsa_router)
+        elif isinstance(screen, DDTiSyncScreen): # NEW
+            screen.attach(self.chord_capture, self.cfg, self.alsa_router)
         elif isinstance(screen, HomeScreen) and self.chord_capture:
             screen._chord_capture = self.chord_capture
+        
+        # NEW: Call activate if the screen has it
+        if hasattr(screen, 'activate'):
+            screen.activate()
+
         self._stack.append(screen)
         self.dirty = True
 
