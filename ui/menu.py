@@ -700,16 +700,53 @@ class DDTiSyncScreen(Screen):
         self._status = "Waiting for dump..."
         self._last_notes = None
         self._start_ts = time.monotonic()
+        self._ddti_in = None
+        self._sysex_count = 0  # Track received SysEx messages
+
+    def _activate_monitoring(self):
+        """Start monitoring DDTi port for incoming SysEx."""
+        import mido
+        ddti_name = self._cc.midi.get_out_port_name()  # Use same port as output
+        print(f"DDTi Sync: Opening monitoring on: {ddti_name}")
+        if ddti_name:
+            try:
+                self._ddti_in = mido.open_input(ddti_name)
+                print("✓ DDTi sync monitoring active")
+                return True
+            except Exception as e:
+                print(f"✗ DDTi sync monitoring failed: {e}")
+                self._ddti_in = None
+                return False
+        return False
+
+    def _deactivate_monitoring(self):
+        """Stop monitoring DDTi port."""
+        if self._ddti_in:
+            try:
+                self._ddti_in.close()
+                print("✓ DDTi sync monitoring closed")
+            except:
+                pass
+            self._ddti_in = None
 
     def render(self, draw: ImageDraw.ImageDraw, w: int, h: int) -> None:
         draw.rectangle((0,0,w-1,h-1), outline=1, fill=0)
         draw.text((4,2), "DDTi Sync", fill=1)
-        draw.text((4,14), self._status[:18], fill=1)
+        
+        # Show status and SysEx count
+        if self._sysex_count > 0:
+            status_text = f"Got {self._sysex_count} SysEx"
+        else:
+            status_text = self._status[:18]
+        draw.text((4,14), status_text, fill=1)
+        
         if self._last_notes:
             draw.text((4,26), "Notes:"+"/".join(str(n) for n in self._last_notes), fill=1)
+        
         age = self._cc.ddti.kit0_age_seconds()
         if age is not None:
             draw.text((4,38), f"Age:{int(age)}s", fill=1)
+            
         if self._done:
             draw.text((4,50), "OK - Back", fill=1)
         else:
@@ -717,23 +754,56 @@ class DDTiSyncScreen(Screen):
 
     def on_key(self, key: int) -> ScreenResult:
         if key == BUTTON_LEFT:
+            self._deactivate_monitoring()
             return ScreenResult(pop=True)
         if key == BUTTON_SELECT and self._done:
+            self._deactivate_monitoring()
             return ScreenResult(pop=True)
+        if key == BUTTON_UP and not self._done:
+            # Manual trigger to activate monitoring if not already active
+            if not self._ddti_in:
+                if self._activate_monitoring():
+                    self._status = "Monitoring active"
+                else:
+                    self._status = "Monitor failed"
+                return ScreenResult(dirty=True)
         return ScreenResult(dirty=False)
 
     def update(self) -> ScreenResult:
+        # Start monitoring on first update if not already started
+        if not self._ddti_in and not self._done:
+            self._activate_monitoring()
+            
+        # Process incoming SysEx messages
+        if self._ddti_in:
+            for msg in list(self._ddti_in.iter_pending()):
+                if msg.type == 'sysex':
+                    self._sysex_count += 1
+                    print(f"DDTi Sync: Received SysEx len={len(msg.data)} data[0:8]={list(msg.data[:8])}")
+                    try:
+                        self._cc.ddti.ingest_sysex_frame(bytes(msg.data))
+                    except Exception as e:
+                        print(f"DDTi Sync: Ingest error: {e}")
+        
+        # Check if we successfully captured kit0
         if not self._done and self._cc.ddti.have_kit0_bulk():
             notes = self._cc.ddti.extract_kit0_notes()
             if notes:
                 self._last_notes = notes
-                self._status = "Kit0 captured"
+                self._status = "Kit0 captured!"
                 self._done = True
+                print(f"DDTi Sync: Successfully captured kit0 notes: {notes}")
                 return ScreenResult(dirty=True)
-        # keep redrawing every ~0.5s to show age
+        
+        # Update status if we're receiving SysEx but no kit0 yet
+        if self._sysex_count > 0 and not self._done:
+            self._status = f"Processing {self._sysex_count} msgs"
+            
+        # Keep redrawing every ~0.5s to show updates
         if (time.monotonic() - self._start_ts) > 0.5:
             self._start_ts = time.monotonic()
             return ScreenResult(dirty=True)
+            
         return ScreenResult(dirty=False)
 
 class HomeScreen(Screen):
