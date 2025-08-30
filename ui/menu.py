@@ -760,35 +760,33 @@ class SingleNoteCaptureScreen(BaseCaptureScreen):
         self.captured_keyboard_note = None
         self.waiting_for_trigger = True
         
-        # Don't activate the main chord capture - we'll monitor MIDI directly
-        # but flush any pending messages
+        # Flush any pending messages from both sources
         flushed_messages = list(self.chord_capture.midi.iter_input())
         if flushed_messages:
-            print(f"Flushed {len(flushed_messages)} stale MIDI messages")
+            print(f"Flushed {len(flushed_messages)} stale keyboard MIDI messages")
+            
+        # Also clear any DDTi tap messages
+        if self.chord_capture.midi._ddti_tap:
+            self.chord_capture.midi._ddti_tap.get_recent_notes(0.1)  # Clear recent messages
         
-    def deactivate(self):
-        """Stop single note capture mode."""
-        super().deactivate()
-        self.captured_trigger_note = None
-        self.captured_keyboard_note = None
-    
     def update(self) -> ScreenResult:
-        """Check for captured notes."""
+        """Check for captured notes from separate sources."""
         if not self.active:
             return ScreenResult(dirty=False)
-            
-        # Process incoming MIDI messages - specific to single-note mode
-        all_messages = list(self.chord_capture.midi.iter_input())
         
-        for msg in all_messages:
-            if msg.type == 'note_on' and msg.velocity > 0:
-                if self.waiting_for_trigger:
-                    # Any note we hear while waiting is considered the trigger
-                    self.captured_trigger_note = msg.note
-                    self.waiting_for_trigger = False
-                    print(f"Captured trigger note: {note_to_name(msg.note)} ({msg.note})")
-                elif self.captured_keyboard_note is None:
-                    # This is the keyboard note to send
+        # Check for DDTi trigger notes (from DDTi output)
+        if self.waiting_for_trigger:
+            ddti_note = self.chord_capture.midi.get_ddti_latest_note()
+            if ddti_note is not None:
+                self.captured_trigger_note = ddti_note
+                self.waiting_for_trigger = False
+                print(f"Captured DDTi trigger note: {note_to_name(ddti_note)} ({ddti_note})")
+        
+        # Check for keyboard input notes (from keyboard input)
+        if not self.waiting_for_trigger and self.captured_keyboard_note is None:
+            keyboard_messages = list(self.chord_capture.midi.iter_input())
+            for msg in keyboard_messages:
+                if msg.type == 'note_on' and msg.velocity > 0:
                     self.captured_keyboard_note = msg.note
                     print(f"Captured keyboard note: {note_to_name(msg.note)} ({msg.note})")
                     
@@ -797,6 +795,7 @@ class SingleNoteCaptureScreen(BaseCaptureScreen):
                     
                     # Start completion timer
                     self.completion_time = time.monotonic()
+                    break  # Only capture the first note
         
         # Call base class update for common completion logic
         return super().update()
