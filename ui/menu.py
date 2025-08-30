@@ -748,10 +748,10 @@ class BaseCaptureScreen(Screen):
 
 class SingleNoteCaptureScreen(BaseCaptureScreen):
     def __init__(self, chord_capture):
-        super().__init__(chord_capture, turns=10)  # 10 turns for single-note mode
+        super().__init__(chord_capture, turns=15)  # 10 turns for single-note mode
         
         # Note display positions - specific to single-note mode
-        self.trigger_position = (100, 32)  # Far right, vertical middle
+        self.trigger_position = (105, 32)  # Far right, vertical middle
         self.keyboard_position = (4, 32)   # Far left, vertical middle
         
         # Single-note capture state
