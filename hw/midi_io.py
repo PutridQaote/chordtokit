@@ -146,3 +146,17 @@ class Midi:
         except Exception as e:
             print(f"Error sending MIDI: {e}")
             return False
+
+    def get_in_port_name(self) -> Optional[str]:
+        # Currently-open keyboard input (if any)
+        try:
+            return getattr(self._in_port, "name", None)
+        except Exception:
+            return None
+
+    def get_out_port_name(self) -> Optional[str]:
+        # Currently-open DDTi output (if any)
+        try:
+            return getattr(self._out_port, "name", None)
+        except Exception:
+            return None

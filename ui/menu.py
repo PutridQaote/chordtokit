@@ -15,6 +15,7 @@ import math
 import time
 import subprocess
 import os
+import mido
 
 BUTTON_LEFT, BUTTON_UP, BUTTON_DOWN, BUTTON_SELECT = 0, 1, 2, 3  # logical left→right indices
 
@@ -761,68 +762,82 @@ class SingleNoteCaptureScreen(BaseCaptureScreen):
         # ALSA router reference (will be set by menu)
         self.alsa_router = None
         self._original_keyboard_routing = False
+
+        self._ddti_in = None              # temp MIDO input for DDTi
+        self._prev_kb_thru = None         # remember ALSA keyboard-thru
+
         
     def set_alsa_router(self, router):
         """Set the ALSA router reference."""
         self.alsa_router = router
         
     def activate(self):
-        """Start single note capture mode."""
         super().activate()
+        # 1) Temporarily disable keyboard-through at ALSA layer (so you don't echo while capturing)
+        if self.alsa_router:
+            self._prev_kb_thru = self.alsa_router.get_keyboard_thru()
+            self.alsa_router.set_keyboard_thru(False)
+
+        # 2) Open a dedicated input on the DDTi port (same string you use for out)
+        ddti_name = self.chord_capture.midi.get_out_port_name()
+        if ddti_name:
+            try:
+                self._ddti_in = mido.open_input(ddti_name)
+                # Drain any stale messages from both streams
+                _ = list(self._ddti_in.iter_pending())
+            except Exception as e:
+                print(f"[single-note] Failed to open DDTi input '{ddti_name}': {e}")
+                self._ddti_in = None
+
+        # Also drain stale keyboard input messages
+        _ = list(self.chord_capture.midi.iter_input())
+
+        # Reset capture state
         self.captured_trigger_note = None
         self.captured_keyboard_note = None
         self.waiting_for_trigger = True
-        
-        # Temporarily disable keyboard thru so Python can see keyboard input
-        if self.alsa_router:
-            self._original_keyboard_routing = self.alsa_router.get_keyboard_thru()
-            if self._original_keyboard_routing:
-                print("Temporarily disabling keyboard thru for single-note capture")
-                self.alsa_router.set_keyboard_thru(False)
-        
-        # Flush any pending messages
-        flushed_messages = list(self.chord_capture.midi.iter_input())
-        if flushed_messages:
-            print(f"Flushed {len(flushed_messages)} stale MIDI messages")
+        self.completion_time = None
     
     def deactivate(self):
-        """Stop single note capture mode."""
-        # Restore original keyboard routing
-        if self.alsa_router and hasattr(self, '_original_keyboard_routing'):
-            if self._original_keyboard_routing:
-                print("Restoring keyboard thru routing")
-                self.alsa_router.set_keyboard_thru(True)
-        
+        # Close temp DDTi input
+        try:
+            if self._ddti_in is not None:
+                self._ddti_in.close()
+        except Exception:
+            pass
+        self._ddti_in = None
+
+        # Restore ALSA keyboard-thru
+        if self.alsa_router and self._prev_kb_thru is not None:
+            self.alsa_router.set_keyboard_thru(self._prev_kb_thru)
         super().deactivate()
-        
+
     def update(self) -> ScreenResult:
-        """Check for captured notes from different MIDI channels."""
         if not self.active:
             return ScreenResult(dirty=False)
-        
-        # Process all incoming MIDI messages
-        all_messages = list(self.chord_capture.midi.iter_input())
-        
-        for msg in all_messages:
-            if msg.type == 'note_on' and msg.velocity > 0:
-                # Check MIDI channel to determine source
-                if self.waiting_for_trigger and self._is_ddti_message(msg):
-                    # DDTi trigger note (channel 10)
+
+        # 1) If we still need the trigger, poll the DDTi stream specifically
+        if self.waiting_for_trigger and self._ddti_in is not None:
+            for msg in list(self._ddti_in.iter_pending()):
+                if msg.type == 'note_on' and getattr(msg, 'velocity', 0) > 0:
+                    # This *is* the DDTi hit (source = DDTi port)
                     self.captured_trigger_note = msg.note
+                    print(f"Captured DDTi trigger note: {note_to_name(msg.note)} ({msg.note})")
                     self.waiting_for_trigger = False
-                    print(f"Captured DDTi trigger note: {note_to_name(msg.note)} ({msg.note}) on channel {msg.channel + 1}")
-                    
-                elif not self.waiting_for_trigger and self.captured_keyboard_note is None and self._is_keyboard_message(msg):
-                    # Keyboard note (any channel except 10)
+                    break
+
+        # 2) If we have the trigger and still need the replacement note, poll keyboard stream
+        if (not self.waiting_for_trigger) and self.captured_keyboard_note is None:
+            for msg in list(self.chord_capture.midi.iter_input()):
+                if msg.type == 'note_on' and getattr(msg, 'velocity', 0) > 0:
                     self.captured_keyboard_note = msg.note
-                    print(f"Captured keyboard note: {note_to_name(msg.note)} ({msg.note}) on channel {msg.channel + 1}")
-                    
-                    # Send the single note change
+                    print(f"Captured keyboard note: {note_to_name(msg.note)} ({msg.note})")
                     self._send_single_note_change()
-                    
-                    # Start completion timer
                     self.completion_time = time.monotonic()
                     break
+
+        # Use the shared completion/timeout logic in BaseCaptureScreen
+        return super().update()
         
         return super().update()
     
@@ -840,34 +855,33 @@ class SingleNoteCaptureScreen(BaseCaptureScreen):
             return
             
         try:
-            # Map the trigger note to a trigger index (0-3)
-            # These are common DDTi default notes, but you can adjust based on your setup
-            trigger_map = {
-                36: 0,  # Kick (C2)
-                38: 1,  # Snare (D2)  
-                42: 2,  # Hi-hat (F#2)
-                49: 3,  # Crash (C#3)
-                # Add more mappings as needed based on your DDTi configuration
-            }
-            
-            # Find which trigger to modify, default to trigger 0
-            trigger_index = trigger_map.get(self.captured_trigger_note, 0)
-            
-            # Create a chord with the new note at the specified trigger position
-            # Use your current DDTi configuration as the base
-            default_chord = [36, 38, 42, 49]  # Kick, snare, hi-hat, crash
-            new_chord = default_chord.copy()
-            new_chord[trigger_index] = self.captured_keyboard_note
-            
-            print(f"Changing trigger {trigger_index} from {note_to_name(self.captured_trigger_note)} to {note_to_name(self.captured_keyboard_note)}")
-            
-            # Send SysEx to DDTi
-            sysex_msg = self.chord_capture.ddti.build_sysex(new_chord)
-            self.chord_capture.midi.send(sysex_msg)
-            print(f"Sent single-note SysEx: {len(sysex_msg.data)} bytes")
-            
+            from features.ddti import DDTi
+            ddti = DDTi()
+            # Get the current 4-note set you intend to send. If you track it elsewhere, use that.
+            # Fallback: read prior notes from your own last chord buffer:
+            current = getattr(self.chord_capture, "last_notes", [60, 64, 67, 72])  # placeholder fallback
+
+            # Find the index to replace by matching the trigger note
+            try:
+                idx = current.index(self.captured_trigger_note)
+            except ValueError:
+                # If the exact note isn't present, choose a sensible default (e.g., slot 0)
+                idx = 0
+
+            old = current[idx]
+            current[idx] = self.captured_keyboard_note
+            print(f"Changing trigger {idx} from {note_to_name(old)} to {note_to_name(self.captured_keyboard_note)}")
+
+            # Build + send
+            from mido import Message
+            msg = ddti.build_sysex(current)
+            sent = self.chord_capture.midi.send(msg)
+            if sent:
+                print(f"Sent single-note SysEx: {len(msg.bin()) if hasattr(msg, 'bin') else 'OK'}")
+            else:
+                print("Failed to send SysEx (MIDI out not open?)")
         except Exception as e:
-            print(f"Error sending single-note SysEx: {e}")
+            print(f"single-note SysEx error: {e}")
     
     def render(self, draw: ImageDraw.ImageDraw, w: int, h: int) -> None:
         # Use base class frame rendering
