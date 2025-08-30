@@ -719,12 +719,12 @@ class DDTiSyncScreen(Screen):
         
         y = 14
         
-        # Show connection status - we're using the main app's MIDI system
-        out_port = self._cc.midi.get_out_port_name()
-        if out_port and "triggerio" in out_port.lower():
-            draw.text((4, y), "Using main MIDI ✓", fill=1)
+        # Show DDTi input connection status
+        ddti_port = self._cc.midi.get_ddti_in_port_name()
+        if ddti_port:
+            draw.text((4, y), "DDTi port open ✓", fill=1)
         else:
-            draw.text((4, y), "No DDTi port ✗", fill=1)
+            draw.text((4, y), "No DDTi input ✗", fill=1)
         y += 10
         
         # Show SysEx count
@@ -763,9 +763,9 @@ class DDTiSyncScreen(Screen):
         if key == BUTTON_SELECT and self._done:
             return ScreenResult(pop=True)
         if key == BUTTON_UP and not self._done:
-            # Clear SysEx count for debugging
-            self._sysex_count = 0
-            self._add_debug("Reset counter")
+            # Debug: show port status
+            ddti_port = self._cc.midi.get_ddti_in_port_name()
+            self._add_debug(f"DDTi port: {ddti_port}")
             return ScreenResult(dirty=True)
         if key == BUTTON_DOWN and not self._done:
             # Debug: show current DDTi state
@@ -778,36 +778,27 @@ class DDTiSyncScreen(Screen):
         return ScreenResult(dirty=False)
 
     def update(self) -> ScreenResult:
-        # Process incoming SysEx messages from the main MIDI system
-        # The key insight: we need to tap into the main app's MIDI input, not open our own
+        # Use the new dedicated DDTi SysEx input method
+        sysex_messages = self._cc.midi.iter_ddti_sysex()
         
-        # Check if the main MIDI input has any messages
-        if hasattr(self._cc.midi, '_in_port') and self._cc.midi._in_port:
-            messages = list(self._cc.midi._in_port.iter_pending())
+        for msg in sysex_messages:
+            self._sysex_count += 1
+            data = bytes(msg.data)
             
-            for msg in messages:
-                if msg.type == 'sysex':
-                    self._sysex_count += 1
-                    data = bytes(msg.data)
-                    
-                    # Log exactly like the working script
-                    self._add_debug(f"SysEx len={len(data)} data[0:8]={list(data[:8])}")
-                    
-                    # Try to ingest into DDTi
-                    try:
-                        before_bulk = self._cc.ddti.have_kit0_bulk()
-                        self._cc.ddti.ingest_sysex_frame(data)
-                        after_bulk = self._cc.ddti.have_kit0_bulk()
-                        
-                        if not before_bulk and after_bulk:
-                            self._add_debug("*** Kit0 captured! ***")
-                        
-                    except Exception as e:
-                        self._add_debug(f"Ingest error: {e}")
-        else:
-            # No MIDI input port available
-            if time.monotonic() - self._start_ts > 2.0:  # Only show after 2 seconds
-                self._add_debug("No MIDI input port")
+            # Log exactly like the working script
+            self._add_debug(f"SysEx len={len(data)} head={list(data[:8])}")
+            
+            # Try to ingest into DDTi
+            try:
+                before_bulk = self._cc.ddti.have_kit0_bulk()
+                self._cc.ddti.ingest_sysex_frame(data)
+                after_bulk = self._cc.ddti.have_kit0_bulk()
+                
+                if not before_bulk and after_bulk:
+                    self._add_debug("*** Kit0 captured! ***")
+                
+            except Exception as e:
+                self._add_debug(f"Ingest error: {e}")
         
         # Check if we successfully captured kit0
         if not self._done and self._cc.ddti.have_kit0_bulk():

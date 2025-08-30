@@ -48,19 +48,27 @@ class Midi:
         ins = [name for name in _dedupe(all_ins) if not _is_virtual_through(name)]
         outs = [name for name in _dedupe(all_outs) if not _is_virtual_through(name)]
 
+        # Keyboard input (for note capture)
         exact_in = _pick_by_name(ins, cfg.get("midi_in_name"))
+        self._in_name = exact_in or _pick_by_substr(ins, cfg.get("midi_in_substr", "keyStep"))
+        
+        # DDTi output (for sending SysEx)
         exact_out = _pick_by_name(outs, cfg.get("midi_out_name"))
-
-        self._in_name = exact_in or _pick_by_substr(ins, cfg.get("midi_in_substr", "triggerio"))
         self._out_name = exact_out or _pick_by_substr(outs, cfg.get("midi_out_substr", "triggerio"))
+        
+        # NEW: DDTi input (for receiving SysEx dumps)
+        exact_ddti_in = _pick_by_name(ins, cfg.get("ddti_in_name"))
+        self._ddti_in_name = exact_ddti_in or _pick_by_substr(ins, cfg.get("ddti_in_substr", "triggerio"))
 
         self._in_port = None
         self._out_port = None
+        self._ddti_in_port = None  # NEW: Dedicated DDTi input port
 
     def open_ports(self):
         """Open MIDI input/output ports based on current settings."""
         self.close_ports()
         
+        # Main keyboard input
         if self._in_name:
             try:
                 self._in_port = mido.open_input(self._in_name)
@@ -69,6 +77,7 @@ class Midi:
                 print(f"Error opening MIDI input {self._in_name}: {e}")
                 self._in_port = None
                 
+        # DDTi output (to send SysEx)
         if self._out_name:
             try:
                 self._out_port = mido.open_output(self._out_name)
@@ -76,6 +85,20 @@ class Midi:
             except Exception as e:
                 print(f"Error opening MIDI output {self._out_name}: {e}")
                 self._out_port = None
+        
+        # NEW: Dedicated DDTi input (for dumps)
+        if self._ddti_in_name:
+            # Share if same as main input
+            if self._ddti_in_name == self._in_name and self._in_port:
+                self._ddti_in_port = self._in_port
+                print(f"DDTi SysEx input shares main input: {self._ddti_in_name}")
+            else:
+                try:
+                    self._ddti_in_port = mido.open_input(self._ddti_in_name)
+                    print(f"Opened DDTi SysEx input: {self._ddti_in_name}")
+                except Exception as e:
+                    print(f"Error opening DDTi SysEx input {self._ddti_in_name}: {e}")
+                    self._ddti_in_port = None
 
     def close_ports(self):
         """Close all MIDI ports."""
@@ -94,6 +117,15 @@ class Midi:
             except Exception:
                 pass
             self._out_port = None
+        
+        # NEW: Close DDTi input (but not if it's shared with main input)
+        if self._ddti_in_port and self._ddti_in_port is not self._in_port:
+            try:
+                self._ddti_in_port.close()
+                print(f"Closed DDTi SysEx input: {self._ddti_in_name}")
+            except Exception:
+                pass
+        self._ddti_in_port = None
 
     def reopen_ports(self):
         """Close and reopen all ports."""
@@ -128,10 +160,16 @@ class Midi:
         """Set output port by name and reopen."""
         self._out_name = name
         self.reopen_ports()
+    
+    # NEW: DDTi input management
+    def set_ddti_in(self, name: str):
+        """Set dedicated DDTi SysEx input port and reopen."""
+        self._ddti_in_name = name
+        self.reopen_ports()
 
     # ----- Runtime I/O -----
     def iter_input(self):
-        """Get pending MIDI input messages (no thru handling)."""
+        """Get pending MIDI input messages from keyboard (no thru handling)."""
         if self._in_port is None:
             return []
         return list(self._in_port.iter_pending())
@@ -147,6 +185,13 @@ class Midi:
             print(f"Error sending MIDI: {e}")
             return False
 
+    # NEW: DDTi SysEx input iterator
+    def iter_ddti_sysex(self):
+        """Yield pending SysEx messages from dedicated DDTi input."""
+        if not self._ddti_in_port:
+            return []
+        return [m for m in self._ddti_in_port.iter_pending() if m.type == 'sysex']
+
     def get_in_port_name(self) -> Optional[str]:
         # Currently-open keyboard input (if any)
         try:
@@ -158,5 +203,12 @@ class Midi:
         # Currently-open DDTi output (if any)
         try:
             return getattr(self._out_port, "name", None)
+        except Exception:
+            return None
+    
+    # NEW: Get DDTi input port name
+    def get_ddti_in_port_name(self) -> Optional[str]:
+        try:
+            return getattr(self._ddti_in_port, "name", None)
         except Exception:
             return None
