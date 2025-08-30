@@ -304,6 +304,16 @@ class ChordCaptureScreen(BaseCaptureScreen):
         if key == BUTTON_LEFT:  # Back button - abort capture
             self.deactivate()
             return ScreenResult(pop=True)
+        elif key == BUTTON_UP:  # Increase spiral turns
+            self.turns = min(50, self.turns + 1)  # Cap at 50 turns
+            self._save_turns_to_config()
+            print(f"Spiral turns increased to {self.turns}")
+            return ScreenResult(dirty=True)
+        elif key == BUTTON_DOWN:  # Decrease spiral turns
+            self.turns = max(1, self.turns - 1)  # Minimum 1 turn
+            self._save_turns_to_config()
+            print(f"Spiral turns decreased to {self.turns}")
+            return ScreenResult(dirty=True)
         return ScreenResult(dirty=False)
     
     def update(self) -> ScreenResult:
@@ -369,10 +379,60 @@ class SingleNoteCaptureScreen(BaseCaptureScreen):
         self._debounce_s = 0.12
         self._min_vel = 8
     
-    # The on_key method is now inherited from BaseCaptureScreen
-    # so it automatically handles UP/DOWN for spiral turns
-    
-    # ... rest of methods unchanged
+    def set_alsa_router(self, router):
+        """Set the ALSA router reference."""
+        self.alsa_router = router
+        
+    def activate(self):
+        """Start single note capture mode."""
+        super().activate()
+        self.captured_trigger_note = None
+        self.captured_keyboard_note = None
+        self.waiting_for_trigger = True
+        
+        # Open dedicated DDTi monitoring input
+        import mido
+        ddti_name = self.chord_capture.midi.get_out_port_name()
+        print(f"Opening DDTi monitoring on: {ddti_name}")
+        if ddti_name:
+            try:
+                self._ddti_in = mido.open_input(ddti_name)
+                print("✓ DDTi monitoring active")
+            except Exception as e:
+                print(f"✗ DDTi monitoring failed: {e}")
+                self._ddti_in = None
+        
+        # Temporarily disable keyboard thru
+        if self.alsa_router:
+            self._prev_kb_thru = self.alsa_router.get_keyboard_thru()
+            if self._prev_kb_thru:
+                print("Temporarily disabling keyboard thru")
+                self.alsa_router.set_keyboard_thru(False)
+                
+        # Flush
+        list(self.chord_capture.midi.iter_input())
+        if self._ddti_in:
+            list(self._ddti_in.iter_pending())
+        
+    def deactivate(self):
+        """Stop single note capture mode."""
+        # Close DDTi monitoring
+        if self._ddti_in:
+            try:
+                self._ddti_in.close()
+                print("✓ DDTi monitoring closed")
+            except:
+                pass
+            self._ddti_in = None
+        
+        # Restore keyboard thru
+        if self.alsa_router and self._prev_kb_thru is not None:
+            if self._prev_kb_thru:
+                print("Restoring keyboard thru")
+                self.alsa_router.set_keyboard_thru(True)
+            self._prev_kb_thru = None
+        
+        super().deactivate()
 
     def update(self) -> ScreenResult:
         if not self.active:
@@ -400,14 +460,6 @@ class SingleNoteCaptureScreen(BaseCaptureScreen):
                     break
 
         return super().update()
-    
-    def _is_ddti_message(self, msg) -> bool:
-        """Determine if a MIDI message came from DDTi (channel 10)."""
-        return msg.channel == 9  # Channel 10 is index 9
-
-    def _is_keyboard_message(self, msg) -> bool:
-        """Determine if a MIDI message came from keyboard (not channel 10)."""
-        return msg.channel != 9  # Any channel except 10
     
     def _send_single_note_change(self):
         """Send SysEx to change just one trigger's note."""
