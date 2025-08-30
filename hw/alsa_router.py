@@ -337,3 +337,27 @@ class AlsaRouter:
             for port in port_list:
                 print(f"  {port.address} - {port.client_name}: {port.port_name}")
         print("===========================")
+    
+    # Add this method to AlsaRouter class temporarily for debugging
+    def debug_current_connections(self):
+        """Show current ALSA connections for debugging."""
+        try:
+            result = subprocess.run(['aconnect', '-l'], 
+                                  capture_output=True, text=True, check=True)
+            
+            print("=== Current ALSA Connections ===")
+            lines = result.stdout.strip().split('\n')
+            in_connections = False
+            
+            for line in lines:
+                if 'Connecting To:' in line:
+                    print(f"  {line}")
+                elif re.match(r'client\s+\d+:', line):
+                    print(line)
+                    in_connections = False
+                elif re.match(r'\s+\d+\s+', line):
+                    print(line)
+            print("================================")
+            
+        except Exception as e:
+            print(f"Error getting connections: {e}")
