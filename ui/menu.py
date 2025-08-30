@@ -472,7 +472,7 @@ class Menu:
         elif isinstance(screen, UtilitiesScreen):
             screen.attach(self.chord_capture, self.cfg, self.neokey)
         elif isinstance(screen, ChordCaptureMenuScreen):
-            screen.attach(self.chord_capture, self.cfg)
+            screen.attach(self.chord_capture, self.cfg, self.alsa_router)  # Pass router
         elif isinstance(screen, HomeScreen) and self.chord_capture:
             screen._chord_capture = self.chord_capture
         self._stack.append(screen)
@@ -583,6 +583,9 @@ class ChordCaptureMenuScreen(Screen):
         if self._chord_capture:
             print("Menu: Starting single-note capture")
             screen = SingleNoteCaptureScreen(self._chord_capture)
+            # Pass the ALSA router so it can manage keyboard routing
+            if hasattr(self, '_alsa_router'):
+                screen.set_alsa_router(self._alsa_router)
             screen.activate()
             return ScreenResult(push=screen, dirty=True)
         return ScreenResult(dirty=False)
@@ -753,6 +756,14 @@ class SingleNoteCaptureScreen(BaseCaptureScreen):
         self.captured_keyboard_note = None  # Keyboard note to send
         self.waiting_for_trigger = True    # True until we hear from DDTi
         
+        # ALSA router reference (will be set by menu)
+        self.alsa_router = None
+        self._original_keyboard_routing = False
+        
+    def set_alsa_router(self, router):
+        """Set the ALSA router reference."""
+        self.alsa_router = router
+        
     def activate(self):
         """Start single note capture mode."""
         super().activate()
@@ -760,10 +771,27 @@ class SingleNoteCaptureScreen(BaseCaptureScreen):
         self.captured_keyboard_note = None
         self.waiting_for_trigger = True
         
+        # Temporarily disable keyboard thru so Python can see keyboard input
+        if self.alsa_router:
+            self._original_keyboard_routing = self.alsa_router.get_keyboard_thru()
+            if self._original_keyboard_routing:
+                print("Temporarily disabling keyboard thru for single-note capture")
+                self.alsa_router.set_keyboard_thru(False)
+        
         # Flush any pending messages
         flushed_messages = list(self.chord_capture.midi.iter_input())
         if flushed_messages:
             print(f"Flushed {len(flushed_messages)} stale MIDI messages")
+    
+    def deactivate(self):
+        """Stop single note capture mode."""
+        # Restore original keyboard routing
+        if self.alsa_router and hasattr(self, '_original_keyboard_routing'):
+            if self._original_keyboard_routing:
+                print("Restoring keyboard thru routing")
+                self.alsa_router.set_keyboard_thru(True)
+        
+        super().deactivate()
         
     def update(self) -> ScreenResult:
         """Check for captured notes from different MIDI channels."""
@@ -792,14 +820,13 @@ class SingleNoteCaptureScreen(BaseCaptureScreen):
                     
                     # Start completion timer
                     self.completion_time = time.monotonic()
-                    break  # Only capture the first keyboard note
+                    break
         
-        # Call base class update for common completion logic
         return super().update()
     
     def _is_ddti_message(self, msg) -> bool:
         """Determine if a MIDI message came from DDTi (channel 10)."""
-        return msg.channel == 9  # Channel 10 is index 9 in 0-based numbering
+        return msg.channel == 9  # Channel 10 is index 9
 
     def _is_keyboard_message(self, msg) -> bool:
         """Determine if a MIDI message came from keyboard (not channel 10)."""
