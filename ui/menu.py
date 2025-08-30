@@ -524,7 +524,24 @@ class SingleNoteCaptureScreen(BaseCaptureScreen):
             return ScreenResult(dirty=True)
         return ScreenResult(dirty=False)
     
-# New capture mode that would use the enhanced DDTi interface
+    def render(self, draw: ImageDraw.ImageDraw, w: int, h: int) -> None:
+        # Use base class frame rendering
+        if not self._render_base_frame(draw, w, h):
+            return  # Inactive, base class handled it
+    
+        # Show trigger note on the right middle - specific to single-note mode
+        if self.captured_trigger_note is not None:
+            trigger_text = f"T:{note_to_name(self.captured_trigger_note)}"
+            draw.text(self.trigger_position, trigger_text, fill=1)
+        
+        # Show keyboard note on the left middle - specific to single-note mode
+        if self.captured_keyboard_note is not None:
+            keyboard_text = f"K:{note_to_name(self.captured_keyboard_note)}"
+            draw.text(self.keyboard_position, keyboard_text, fill=1)
+    
+        # Show "LISTEN" if we haven't completed capture
+        if not self.completion_time:
+            self._draw_listen_text(draw, w, h)
 
 class VariableTriggerCaptureScreen(BaseCaptureScreen):
     def __init__(self, chord_capture, config=None):
