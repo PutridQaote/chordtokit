@@ -715,27 +715,39 @@ class DDTiSyncScreen(Screen):
             self._debug_messages.pop(0)
 
     def _activate_monitoring(self):
-        """Start monitoring DDTi port for incoming SysEx."""
+        """Start monitoring DDTi port for incoming SysEx - EXACTLY like the working script."""
         import mido
         
-        # First, let's see ALL available ports
+        # Use the EXACT same method as the working ddti_capture_sysex.py script
+        ddti_port = None
         all_inputs = mido.get_input_names()
-        self._add_debug(f"All MIDI inputs: {all_inputs}")
+        self._add_debug(f"All inputs: {len(all_inputs)} ports")
         
-        ddti_name = self._cc.midi.get_out_port_name()  # Use same port as output
-        self._add_debug(f"Trying to open: {ddti_name}")
+        for name in all_inputs:
+            if any(k in name.lower() for k in ["triggerio", "ddti", "ddrum"]):
+                ddti_port = name
+                break
         
-        if ddti_name:
+        self._add_debug(f"Found DDTi port: {ddti_port}")
+        
+        if ddti_port:
             try:
-                self._ddti_in = mido.open_input(ddti_name)
+                # Close any existing connection first
+                if self._ddti_in:
+                    try:
+                        self._ddti_in.close()
+                    except:
+                        pass
+                
+                self._ddti_in = mido.open_input(ddti_port)
                 self._add_debug("✓ Monitoring active")
                 return True
             except Exception as e:
-                self._add_debug(f"✗ Monitor failed: {e}")
+                self._add_debug(f"✗ Open failed: {e}")
                 self._ddti_in = None
                 return False
         else:
-            self._add_debug("✗ No DDTi port name available")
+            self._add_debug("✗ No DDTi port found")
         return False
 
     def _deactivate_monitoring(self):
@@ -800,10 +812,10 @@ class DDTiSyncScreen(Screen):
             return ScreenResult(pop=True)
         if key == BUTTON_UP and not self._done:
             # Manual trigger to restart monitoring
-            self._add_debug("Manual restart requested")
+            self._add_debug("Manual restart")
             self._deactivate_monitoring()
             if self._activate_monitoring():
-                self._status = "Monitoring restarted"
+                self._status = "Restarted"
             else:
                 self._status = "Restart failed"
             return ScreenResult(dirty=True)
@@ -811,9 +823,9 @@ class DDTiSyncScreen(Screen):
             # Debug: show current DDTi state
             if self._cc.ddti.have_kit0_bulk():
                 notes = self._cc.ddti.extract_kit0_notes()
-                self._add_debug(f"Current kit0: {notes}")
+                self._add_debug(f"Kit0: {notes}")
             else:
-                self._add_debug("No kit0 bulk cached")
+                self._add_debug("No kit0 bulk")
             return ScreenResult(dirty=True)
         return ScreenResult(dirty=False)
 
@@ -822,62 +834,33 @@ class DDTiSyncScreen(Screen):
         if not self._ddti_in and not self._done:
             self._activate_monitoring()
             
-        # Process incoming SysEx messages with detailed logging
+        # Process incoming SysEx messages - EXACTLY like the working script
         if self._ddti_in:
             messages = list(self._ddti_in.iter_pending())
-            if messages:
-                self._add_debug(f"Got {len(messages)} MIDI messages")
-                
+            
             for msg in messages:
                 if msg.type == 'sysex':
                     self._sysex_count += 1
                     data = bytes(msg.data)
                     
-                    # Detailed SysEx analysis
-                    self._add_debug(f"SysEx #{self._sysex_count}: len={len(data)}")
+                    # Log exactly like the working script
+                    self._add_debug(f"SysEx len={len(data)} data[0:8]={list(data[:8])}")
                     
-                    if len(data) >= 12:
-                        header = list(data[:12])
-                        self._add_debug(f"Header: {header}")
-                        
-                        # Check for expected patterns
-                        if len(data) == 76:
-                            if len(data) > 10 and data[7] == 70 and data[8] == 1:
-                                kit_idx = data[9] if len(data) > 9 else "?"
-
-                                self._add_debug(f"76B bulk frame, kit={kit_idx}")
-                                if data[9] == 0:
-                                    self._add_debug("*** This is kit0 bulk! ***")
-                            else:
-                                self._add_debug("76B frame but wrong pattern")
-                        elif len(data) == 16:
-                            if len(data) > 10 and data[7] == 10 and data[8] == 2:
-                                kit_idx = data[9] if len(data) > 9 else "?"
-
-                                self._add_debug(f"16B param frame, kit={kit_idx}")
-                            else:
-                                self._add_debug("16B frame but wrong pattern")
-                        else:
-                            self._add_debug(f"Unexpected length: {len(data)}")
-                    
-                    # Try to ingest regardless of what we think it is
+                    # Try to ingest into DDTi
                     try:
                         before_bulk = self._cc.ddti.have_kit0_bulk()
                         self._cc.ddti.ingest_sysex_frame(data)
                         after_bulk = self._cc.ddti.have_kit0_bulk()
                         
                         if not before_bulk and after_bulk:
-                            self._add_debug("*** Kit0 bulk captured! ***")
+                            self._add_debug("*** Kit0 captured! ***")
                         
                     except Exception as e:
                         self._add_debug(f"Ingest error: {e}")
                         
                 elif msg.type in ['note_on', 'note_off']:
-                    # Log note messages too for context
-                    self._add_debug(f"Note: {msg.type} {msg.note}")
-                else:
-                    # Log other message types
-                    self._add_debug(f"MIDI: {msg.type}")
+                    # Log note messages for context (but don't spam)
+                    pass
         
         # Check if we successfully captured kit0
         if not self._done and self._cc.ddti.have_kit0_bulk():
@@ -886,11 +869,11 @@ class DDTiSyncScreen(Screen):
                 self._last_notes = notes
                 self._status = "Kit0 captured!"
                 self._done = True
-                self._add_debug(f"SUCCESS: Kit0 notes: {notes}")
+                self._add_debug(f"SUCCESS: {notes}")
                 return ScreenResult(dirty=True)
         
-        # Auto-refresh display every 0.2 seconds to show debug updates
-        if (time.monotonic() - self._start_ts) > 0.2:
+        # Auto-refresh display every 0.5 seconds
+        if (time.monotonic() - self._start_ts) > 0.5:
             self._start_ts = time.monotonic()
             return ScreenResult(dirty=True)
             
