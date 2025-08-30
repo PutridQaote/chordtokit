@@ -24,6 +24,11 @@ DEFAULTS: Dict[str, Any] = {
     "led_backlight_brightness": 1.0,  # Add this new setting (100%)
     "octave_down_lowest": False,
     "allow_duplicate_notes": False,
+    "footswitch_capture_mode": "all",  # Add this new setting: "all" or "single"
+
+    # Spiral animation settings for each capture mode
+    "spiral_turns_4_note": 20,    # Default turns for 4-note capture
+    "spiral_turns_single": 5,     # Default turns for single-note capture
 
     # Footswitch (so you can flip NO/NC without editing code)
     "footswitch_active_low": True,

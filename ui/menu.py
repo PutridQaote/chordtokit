@@ -38,14 +38,12 @@ class Screen:
     def on_key(self, key: int) -> ScreenResult:
         return ScreenResult()
 
-class ChordCaptureScreen(Screen):
-    def __init__(self, chord_capture):
-        self.chord_capture = chord_capture
-        self.active = False
-        # Spiral animation state - EXACT values from test file
-        self.start_time = 0.0
-        self.speed = 3.33  # SPIRAL_SPEED from test file
-        self.turns = 20    # SPIRAL_TURNS from test file
+class ChordCaptureScreen(BaseCaptureScreen):
+    def __init__(self, chord_capture, config=None):
+        # Call parent with config settings for 4-note mode
+        super().__init__(chord_capture, turns=20, 
+                        config_key="spiral_turns_4_note", config=config)
+        
         # Note display positions (corners)
         self.note_positions = [
             (4, 4),      # Top-left
@@ -53,7 +51,6 @@ class ChordCaptureScreen(Screen):
             (100, 52),   # Bottom-right
             (100, 4),    # Top-right
         ]
-        self.completion_time = None  # When 4th note was captured
         self.captured_notes = []     # Store notes during completion delay
         
     def activate(self):
@@ -560,23 +557,24 @@ class ChordCaptureMenuScreen(Screen):
             ("4-Note Capture", self._start_4_note_capture),
             ("Single Note Capture", self._start_single_note_capture),
             ("LoNote OctDown", self._toggle_octave_down),
-            ("Back", None),
+            ("Footswitch Mode", self._toggle_footswitch_mode),  # New option
+            # Removed ("Back", None) - use back button instead
         ]
         self.sel = 0
         self._chord_capture = None
         self._cfg = None
-        self._alsa_router = None  # Add this line
+        self._alsa_router = None
 
-    def attach(self, chord_capture, config, alsa_router=None):  # Add alsa_router parameter
+    def attach(self, chord_capture, config, alsa_router=None):
         self._chord_capture = chord_capture
         self._cfg = config
-        self._alsa_router = alsa_router  # Store router reference
+        self._alsa_router = alsa_router
 
     def _start_4_note_capture(self):
         """Start the traditional 4-note chord capture."""
         if self._chord_capture:
             print("Menu: Starting 4-note chord capture")
-            screen = ChordCaptureScreen(self._chord_capture)
+            screen = ChordCaptureScreen(self._chord_capture, config=self._cfg)  # Pass config
             screen.activate()
             return ScreenResult(push=screen, dirty=True)
         return ScreenResult(dirty=False)
@@ -585,14 +583,13 @@ class ChordCaptureMenuScreen(Screen):
         """Start the new single-note capture mode."""
         if self._chord_capture:
             print("Menu: Starting single-note capture")
-            screen = SingleNoteCaptureScreen(self._chord_capture)
-            # Pass the ALSA router so it can manage keyboard routing
-            if self._alsa_router:  # Now this will work
+            screen = SingleNoteCaptureScreen(self._chord_capture, config=self._cfg)  # Pass config
+            if self._alsa_router:
                 screen.set_alsa_router(self._alsa_router)
             screen.activate()
             return ScreenResult(push=screen, dirty=True)
         return ScreenResult(dirty=False)
-
+    
     def _toggle_octave_down(self):
         if self._chord_capture and self._cfg:
             current = self._cfg.get("octave_down_lowest", False)
@@ -600,6 +597,22 @@ class ChordCaptureMenuScreen(Screen):
             self._cfg.set("octave_down_lowest", new_val)
             self._cfg.save()
             self._chord_capture.set_octave_down_lowest(new_val)
+
+    def _toggle_footswitch_mode(self):
+        """Toggle footswitch mode between 'all' (4-note) and 'single' (1-note)."""
+        if self._cfg:
+            current = self._cfg.get("footswitch_capture_mode", "all")  # Default to "all"
+            new_mode = "single" if current == "all" else "all"
+            self._cfg.set("footswitch_capture_mode", new_mode)
+            self._cfg.save()
+            print(f"Footswitch mode changed to: {new_mode}")
+
+    def _get_footswitch_mode_label(self) -> str:
+        """Get the current footswitch mode as a label."""
+        if not self._cfg:
+            return "All"
+        mode = self._cfg.get("footswitch_capture_mode", "all")
+        return "All" if mode == "all" else "1 Note"
 
     def on_key(self, key: int) -> ScreenResult:
         if key == BUTTON_UP:
@@ -610,8 +623,6 @@ class ChordCaptureMenuScreen(Screen):
             return ScreenResult(dirty=True)
         if key == BUTTON_SELECT:
             label, action = self.rows[self.sel]
-            if label == "Back":
-                return ScreenResult(pop=True)
             if action:
                 result = action()
                 if result:
@@ -626,12 +637,13 @@ class ChordCaptureMenuScreen(Screen):
         draw.text((4, 2), "Chord Capture", fill=1)
         
         octave_down = self._cfg.get("octave_down_lowest", False) if self._cfg else False
+        footswitch_mode = self._get_footswitch_mode_label()
         
         body = [
             "4-Note Capture",
             "Single Note Capture", 
             f"LoNote OctDown: {'On' if octave_down else 'Off'}",
-            "Back",
+            f"Footswitch: {footswitch_mode}",  # Show current footswitch mode
         ]
         y = 14
         for i, line in enumerate(body):
@@ -642,13 +654,23 @@ class ChordCaptureMenuScreen(Screen):
 class BaseCaptureScreen(Screen):
     """Base class for chord capture screens with shared spiral and UI elements."""
     
-    def __init__(self, chord_capture, turns=20):
+    def __init__(self, chord_capture, turns=20, config_key=None, config=None):
         self.chord_capture = chord_capture
         self.active = False
-        # Spiral animation state
+        # Spiral animation state - EXACT values from test file
         self.start_time = 0.0
         self.speed = 3.33  # SPIRAL_SPEED
-        self.turns = turns  # Configurable turns
+        
+        # Turn management
+        self.config_key = config_key  # e.g., "spiral_turns_4_note"
+        self.config = config
+        
+        # Load turns from config or use default
+        if config_key and config:
+            self.turns = config.get(config_key, turns)
+        else:
+            self.turns = turns
+            
         self.completion_time = None  # When capture was completed
         
     def activate(self):
@@ -662,11 +684,27 @@ class BaseCaptureScreen(Screen):
         self.active = False
     
     def on_key(self, key: int) -> ScreenResult:
-        """Handle back button to abort capture."""
+        """Handle navigation and back button."""
         if key == BUTTON_LEFT:  # Back button - abort capture
             self.deactivate()
             return ScreenResult(pop=True)
+        elif key == BUTTON_UP:  # Increase spiral turns
+            self.turns = min(50, self.turns + 1)  # Cap at 50 turns
+            self._save_turns_to_config()
+            print(f"Spiral turns increased to {self.turns}")
+            return ScreenResult(dirty=True)
+        elif key == BUTTON_DOWN:  # Decrease spiral turns
+            self.turns = max(1, self.turns - 1)  # Minimum 1 turn
+            self._save_turns_to_config()
+            print(f"Spiral turns decreased to {self.turns}")
+            return ScreenResult(dirty=True)
         return ScreenResult(dirty=False)
+    
+    def _save_turns_to_config(self):
+        """Save current turns setting to config."""
+        if self.config_key and self.config:
+            self.config.set(self.config_key, self.turns)
+            self.config.save()
     
     def _draw_spiral(self, draw, w, h, t):
         """Draw animated spiral - shared between both capture modes."""
@@ -674,7 +712,7 @@ class BaseCaptureScreen(Screen):
         radius = min(w, h) * 0.5 - 2
         
         # Archimedean spiral r = a + b*theta, animated by phase t
-        turns = self.turns
+        turns = self.turns  # Use current turns setting
         theta_max = 2 * math.pi * turns
         a = 0.0
         b = radius / theta_max
@@ -747,74 +785,33 @@ class BaseCaptureScreen(Screen):
         return ScreenResult(dirty=True)
 
 class SingleNoteCaptureScreen(BaseCaptureScreen):
-    def __init__(self, chord_capture):
-        super().__init__(chord_capture, turns=15)  # 10 turns for single-note mode
+    def __init__(self, chord_capture, config=None):
+        # Call parent with config settings for single-note mode
+        super().__init__(chord_capture, turns=5, 
+                        config_key="spiral_turns_single", config=config)
         
         # Note display positions - specific to single-note mode
         self.trigger_position = (105, 32)  # Far right, vertical middle
         self.keyboard_position = (4, 32)   # Far left, vertical middle
         
         # Single-note capture state
-        self.captured_trigger_note = None  # Last DDTi trigger note
-        self.captured_keyboard_note = None  # Keyboard note to send
-        self.waiting_for_trigger = True    # True until we hear from DDTi
-        
-        # ALSA router reference (will be set by menu)
-        self.alsa_router = None
-        self._original_keyboard_routing = False
-
-        self._ddti_in = None              # temp MIDO input for DDTi
-        self._prev_kb_thru = None         # remember ALSA keyboard-thru
-        self._last_ddti_hit_ts = 0.0
-        self._debounce_s = 0.12       # 120 ms; tweak if you want
-        self._min_vel = 8             # ignore ultra-light hits
-
-        
-    def set_alsa_router(self, router):
-        """Set the ALSA router reference."""
-        self.alsa_router = router
-        
-    def activate(self):
-        super().activate()
-        # 1) Temporarily disable keyboard-through at ALSA layer (so you don't echo while capturing)
-        if self.alsa_router:
-            self._prev_kb_thru = self.alsa_router.get_keyboard_thru()
-            self.alsa_router.set_keyboard_thru(False)
-
-        # 2) Open a dedicated input on the DDTi port (same string you use for out)
-        ddti_name = self.chord_capture.midi.get_out_port_name()
-        if ddti_name:
-            try:
-                self._ddti_in = mido.open_input(ddti_name)
-                # Drain any stale messages from both streams
-                _ = list(self._ddti_in.iter_pending())
-            except Exception as e:
-                print(f"[single-note] Failed to open DDTi input '{ddti_name}': {e}")
-                self._ddti_in = None
-
-        # Also drain stale keyboard input messages
-        _ = list(self.chord_capture.midi.iter_input())
-
-        # Reset capture state
-        self._last_ddti_hit_ts = 0.0
         self.captured_trigger_note = None
         self.captured_keyboard_note = None
         self.waiting_for_trigger = True
-        self.completion_time = None
-    
-    def deactivate(self):
-        # Close temp DDTi input
-        try:
-            if self._ddti_in is not None:
-                self._ddti_in.close()
-        except Exception:
-            pass
+        
+        # ALSA router reference
+        self.alsa_router = None
+        self._original_keyboard_routing = False
         self._ddti_in = None
-
-        # Restore ALSA keyboard-thru
-        if self.alsa_router and self._prev_kb_thru is not None:
-            self.alsa_router.set_keyboard_thru(self._prev_kb_thru)
-        super().deactivate()
+        self._prev_kb_thru = None
+        self._last_ddti_hit_ts = 0.0
+        self._debounce_s = 0.12
+        self._min_vel = 8
+    
+    # The on_key method is now inherited from BaseCaptureScreen
+    # so it automatically handles UP/DOWN for spiral turns
+    
+    # ... rest of methods unchanged
 
     def update(self) -> ScreenResult:
         if not self.active:

@@ -7,7 +7,7 @@ from hw.neokey import NeoKey
 from hw.oled import Oled
 from hw.midi_io import Midi
 from hw.footswitch import Footswitch
-from ui.menu import Menu, ChordCaptureScreen
+from ui.menu import Menu, ChordCaptureScreen, SingleNoteCaptureScreen
 from features.chord_capture import ChordCapture
 
 import subprocess
@@ -100,11 +100,23 @@ def main():
                     top_screen.deactivate()
                     menu.pop()
                 else:
-                    # Start chord capture - ensure we start fresh
-                    print("Footswitch: Starting chord capture")
-                    capture_screen = ChordCaptureScreen(chord_capture)
-                    capture_screen.activate()
-                    menu.push(capture_screen)
+                    # Check footswitch mode setting
+                    footswitch_mode = cfg.get("footswitch_capture_mode", "all")
+                    
+                    if footswitch_mode == "single":
+                        # Start single-note capture
+                        print("Footswitch: Starting single-note capture")
+                        capture_screen = SingleNoteCaptureScreen(chord_capture, config=cfg)  # Pass config
+                        if alsa_router:
+                            capture_screen.set_alsa_router(alsa_router)
+                        capture_screen.activate()
+                        menu.push(capture_screen)
+                    else:
+                        # Start 4-note capture (default)
+                        print("Footswitch: Starting 4-note chord capture")
+                        capture_screen = ChordCaptureScreen(chord_capture, config=cfg)  # Pass config
+                        capture_screen.activate()
+                        menu.push(capture_screen)
 
             # Check for long press and other screen updates
             screen_changed = menu.update()
