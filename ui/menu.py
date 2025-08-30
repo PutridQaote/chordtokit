@@ -38,6 +38,239 @@ class Screen:
     def on_key(self, key: int) -> ScreenResult:
         return ScreenResult()
 
+class ChordCaptureMenuScreen(Screen):
+    def __init__(self):
+        self.rows = [
+            ("4-Note Capture", self._start_4_note_capture),
+            ("Single Note Capture", self._start_single_note_capture),
+            ("LoNote OctDown", self._toggle_octave_down),
+            ("Footswitch Mode", self._toggle_footswitch_mode),  # New option
+            # Removed ("Back", None) - use back button instead
+        ]
+        self.sel = 0
+        self._chord_capture = None
+        self._cfg = None
+        self._alsa_router = None
+
+    def attach(self, chord_capture, config, alsa_router=None):
+        self._chord_capture = chord_capture
+        self._cfg = config
+        self._alsa_router = alsa_router
+
+    def _start_4_note_capture(self):
+        """Start the traditional 4-note chord capture."""
+        if self._chord_capture:
+            print("Menu: Starting 4-note chord capture")
+            screen = ChordCaptureScreen(self._chord_capture, config=self._cfg)  # Pass config
+            screen.activate()
+            return ScreenResult(push=screen, dirty=True)
+        return ScreenResult(dirty=False)
+
+    def _start_single_note_capture(self):
+        """Start the new single-note capture mode."""
+        if self._chord_capture:
+            print("Menu: Starting single-note capture")
+            screen = SingleNoteCaptureScreen(self._chord_capture, config=self._cfg)  # Pass config
+            if self._alsa_router:
+                screen.set_alsa_router(self._alsa_router)
+            screen.activate()
+            return ScreenResult(push=screen, dirty=True)
+        return ScreenResult(dirty=False)
+    
+    def _toggle_octave_down(self):
+        if self._chord_capture and self._cfg:
+            current = self._cfg.get("octave_down_lowest", False)
+            new_val = not current
+            self._cfg.set("octave_down_lowest", new_val)
+            self._cfg.save()
+            self._chord_capture.set_octave_down_lowest(new_val)
+
+    def _toggle_footswitch_mode(self):
+        """Toggle footswitch mode between 'all' (4-note) and 'single' (1-note)."""
+        if self._cfg:
+            current = self._cfg.get("footswitch_capture_mode", "all")  # Default to "all"
+            new_mode = "single" if current == "all" else "all"
+            self._cfg.set("footswitch_capture_mode", new_mode)
+            self._cfg.save()
+            print(f"Footswitch mode changed to: {new_mode}")
+
+    def _get_footswitch_mode_label(self) -> str:
+        """Get the current footswitch mode as a label."""
+        if not self._cfg:
+            return "All"
+        mode = self._cfg.get("footswitch_capture_mode", "all")
+        return "All" if mode == "all" else "1 Note"
+
+    def on_key(self, key: int) -> ScreenResult:
+        if key == BUTTON_UP:
+            self.sel = (self.sel - 1) % len(self.rows)
+            return ScreenResult(dirty=True)
+        if key == BUTTON_DOWN:
+            self.sel = (self.sel + 1) % len(self.rows)
+            return ScreenResult(dirty=True)
+        if key == BUTTON_SELECT:
+            label, action = self.rows[self.sel]
+            if action:
+                result = action()
+                if result:
+                    return result
+                return ScreenResult(dirty=True)
+        if key == BUTTON_LEFT:
+            return ScreenResult(pop=True)
+        return ScreenResult(dirty=False)
+
+    def render(self, draw: ImageDraw.ImageDraw, w: int, h: int) -> None:
+        draw.rectangle((0,0,w-1,h-1), outline=1, fill=0)
+        draw.text((4, 2), "Chord Capture", fill=1)
+        
+        octave_down = self._cfg.get("octave_down_lowest", False) if self._cfg else False
+        footswitch_mode = self._get_footswitch_mode_label()
+        
+        body = [
+            "4-Note Capture",
+            "Single Note Capture", 
+            f"LoNote OctDown: {'On' if octave_down else 'Off'}",
+            f"Footswitch: {footswitch_mode}",  # Show current footswitch mode
+        ]
+        y = 14
+        for i, line in enumerate(body):
+            prefix = "> " if i == self.sel else "  "
+            draw.text((4, y), prefix + line, fill=1)
+            y += 12
+
+class BaseCaptureScreen(Screen):
+    """Base class for chord capture screens with shared spiral and UI elements."""
+    
+    def __init__(self, chord_capture, turns=20, config_key=None, config=None):
+        self.chord_capture = chord_capture
+        self.active = False
+        # Spiral animation state - EXACT values from test file
+        self.start_time = 0.0
+        self.speed = 3.33  # SPIRAL_SPEED
+        
+        # Turn management
+        self.config_key = config_key  # e.g., "spiral_turns_4_note"
+        self.config = config
+        
+        # Load turns from config or use default
+        if config_key and config:
+            self.turns = config.get(config_key, turns)
+        else:
+            self.turns = turns
+            
+        self.completion_time = None  # When capture was completed
+        
+    def activate(self):
+        """Start capture mode - subclasses should override and call super()."""
+        self.active = True
+        self.start_time = time.monotonic()
+        self.completion_time = None
+        
+    def deactivate(self):
+        """Stop capture mode - subclasses should override and call super()."""
+        self.active = False
+    
+    def on_key(self, key: int) -> ScreenResult:
+        """Handle navigation and back button."""
+        if key == BUTTON_LEFT:  # Back button - abort capture
+            self.deactivate()
+            return ScreenResult(pop=True)
+        elif key == BUTTON_UP:  # Increase spiral turns
+            self.turns = min(50, self.turns + 1)  # Cap at 50 turns
+            self._save_turns_to_config()
+            print(f"Spiral turns increased to {self.turns}")
+            return ScreenResult(dirty=True)
+        elif key == BUTTON_DOWN:  # Decrease spiral turns
+            self.turns = max(1, self.turns - 1)  # Minimum 1 turn
+            self._save_turns_to_config()
+            print(f"Spiral turns decreased to {self.turns}")
+            return ScreenResult(dirty=True)
+        return ScreenResult(dirty=False)
+    
+    def _save_turns_to_config(self):
+        """Save current turns setting to config."""
+        if self.config_key and self.config:
+            self.config.set(self.config_key, self.turns)
+            self.config.save()
+    
+    def _draw_spiral(self, draw, w, h, t):
+        """Draw animated spiral - shared between both capture modes."""
+        cx, cy = w // 2, h // 2
+        radius = min(w, h) * 0.5 - 2
+        
+        # Archimedean spiral r = a + b*theta, animated by phase t
+        turns = self.turns  # Use current turns setting
+        theta_max = 2 * math.pi * turns
+        a = 0.0
+        b = radius / theta_max
+        
+        # Phase offset to animate
+        phase = t * self.speed
+        
+        # Draw the spiral as connected short segments
+        step = 0.03
+        prev = None
+        for k in range(int(theta_max / step) + 1):
+            theta = k * step + phase
+            r = a + b * (k * step)
+            x = int(cx + r * math.cos(theta))
+            y = int(cy + r * math.sin(theta))
+            if prev is not None:
+                try:
+                    draw.line((prev[0], prev[1], x, y), fill=1)
+                except:
+                    pass  # Skip if out of bounds
+            prev = (x, y)
+    
+    def _draw_listen_text(self, draw, w, h):
+        """Draw 'LISTEN' text in center - shared between both capture modes."""
+        listen_text = "LISTEN"
+        bbox = draw.textbbox((0, 0), listen_text)
+        text_w = bbox[2] - bbox[0]
+        text_h = bbox[3] - bbox[1]
+    
+        # Center the text
+        text_x = (w - text_w) // 2
+        text_y = (h - text_h) // 2
+    
+        # Draw "listen" in black with bold effect
+        offsets = [
+            (0, 0),    # original position
+            (1, 0),    # right
+            (0, 1),    # down
+            (1, 1),    # diagonal
+        ]
+        
+        for dx, dy in offsets:
+            draw.text((text_x + dx, text_y + dy), listen_text, fill=0)
+    
+    def _render_base_frame(self, draw, w, h):
+        """Render the basic frame and spiral - shared setup."""
+        # Clear screen with border
+        draw.rectangle((0, 0, w-1, h-1), outline=0, fill=0)
+        draw.rectangle((0, 0, w-1, h-1), outline=1, fill=0)
+    
+        if not self.active:
+            draw.text((4, h//2), "Capture inactive", fill=1)
+            return False  # Don't continue rendering
+    
+        # Calculate time elapsed since start and draw spiral
+        t = time.monotonic() - self.start_time
+        self._draw_spiral(draw, w, h, t)
+        return True  # Continue with specific rendering
+    
+    def update(self) -> ScreenResult:
+        """Base update - subclasses should override."""
+        if not self.active:
+            return ScreenResult(dirty=False)
+        
+        # Check if we should exit after 1 second delay
+        if self.completion_time and (time.monotonic() - self.completion_time) >= 1.0:
+            self.deactivate()
+            return ScreenResult(pop=True)
+            
+        return ScreenResult(dirty=True)
+
 class ChordCaptureScreen(BaseCaptureScreen):
     def __init__(self, chord_capture, config=None):
         # Call parent with config settings for 4-note mode
@@ -107,6 +340,123 @@ class ChordCaptureScreen(BaseCaptureScreen):
                 x, y = self.note_positions[i]
                 note_text = f"{note_to_name(note)}"
                 draw.text((x, y), note_text, fill=1)
+    
+        # Show "LISTEN" if we haven't completed capture
+        if not self.completion_time:
+            self._draw_listen_text(draw, w, h)
+
+class SingleNoteCaptureScreen(BaseCaptureScreen):
+    def __init__(self, chord_capture, config=None):
+        # Call parent with config settings for single-note mode
+        super().__init__(chord_capture, turns=5, 
+                        config_key="spiral_turns_single", config=config)
+        
+        # Note display positions - specific to single-note mode
+        self.trigger_position = (105, 32)  # Far right, vertical middle
+        self.keyboard_position = (4, 32)   # Far left, vertical middle
+        
+        # Single-note capture state
+        self.captured_trigger_note = None
+        self.captured_keyboard_note = None
+        self.waiting_for_trigger = True
+        
+        # ALSA router reference
+        self.alsa_router = None
+        self._original_keyboard_routing = False
+        self._ddti_in = None
+        self._prev_kb_thru = None
+        self._last_ddti_hit_ts = 0.0
+        self._debounce_s = 0.12
+        self._min_vel = 8
+    
+    # The on_key method is now inherited from BaseCaptureScreen
+    # so it automatically handles UP/DOWN for spiral turns
+    
+    # ... rest of methods unchanged
+
+    def update(self) -> ScreenResult:
+        if not self.active:
+            return ScreenResult(dirty=False)
+
+        # --- NEW: always allow DDTi hits to (re)select trigger until keyboard note is taken ---
+        if self._ddti_in is not None and self.captured_keyboard_note is None:
+            for msg in list(self._ddti_in.iter_pending()):
+                if msg.type == 'note_on' and getattr(msg, 'velocity', 0) >= self._min_vel:
+                    now = time.monotonic()
+                    if now - self._last_ddti_hit_ts >= self._debounce_s:
+                        self._last_ddti_hit_ts = now
+                        self.captured_trigger_note = msg.note
+                        self.waiting_for_trigger = False
+                        print(f"Selected DDTi trigger: {note_to_name(msg.note)} ({msg.note}) [rollover enabled]")
+
+        # If we have a trigger (possibly updated above) but no keyboard note yet, read keyboard
+        if (self.captured_trigger_note is not None) and (self.captured_keyboard_note is None):
+            for msg in list(self.chord_capture.midi.iter_input()):
+                if msg.type == 'note_on' and getattr(msg, 'velocity', 0) > 0:
+                    self.captured_keyboard_note = msg.note
+                    print(f"Captured keyboard note: {note_to_name(msg.note)} ({msg.note})")
+                    self._send_single_note_change()
+                    self.completion_time = time.monotonic()
+                    break
+
+        return super().update()
+    
+    def _is_ddti_message(self, msg) -> bool:
+        """Determine if a MIDI message came from DDTi (channel 10)."""
+        return msg.channel == 9  # Channel 10 is index 9
+
+    def _is_keyboard_message(self, msg) -> bool:
+        """Determine if a MIDI message came from keyboard (not channel 10)."""
+        return msg.channel != 9  # Any channel except 10
+    
+    def _send_single_note_change(self):
+        """Send SysEx to change just one trigger's note."""
+        if self.captured_trigger_note is None or self.captured_keyboard_note is None:
+            return
+            
+        try:
+            from features.ddti import DDTi
+            ddti = DDTi()
+            # Get the current 4-note set you intend to send. If you track it elsewhere, use that.
+            # Fallback: read prior notes from your own last chord buffer:
+            current = getattr(self.chord_capture, "last_notes", [60, 64, 67, 72])  # placeholder fallback
+
+            # Find the index to replace by matching the trigger note
+            try:
+                idx = current.index(self.captured_trigger_note)
+            except ValueError:
+                # If the exact note isn't present, choose a sensible default (e.g., slot 0)
+                idx = 0
+
+            old = current[idx]
+            current[idx] = self.captured_keyboard_note
+            print(f"Changing trigger {idx} from {note_to_name(old)} to {note_to_name(self.captured_keyboard_note)}")
+
+            # Build + send
+            from mido import Message
+            msg = ddti.build_sysex(current)
+            sent = self.chord_capture.midi.send(msg)
+            if sent:
+                print(f"Sent single-note SysEx: {len(msg.bin()) if hasattr(msg, 'bin') else 'OK'}")
+            else:
+                print("Failed to send SysEx (MIDI out not open?)")
+        except Exception as e:
+            print(f"single-note SysEx error: {e}")
+    
+    def render(self, draw: ImageDraw.ImageDraw, w: int, h: int) -> None:
+        # Use base class frame rendering
+        if not self._render_base_frame(draw, w, h):
+            return  # Inactive, base class handled it
+    
+        # Show trigger note on the right middle - specific to single-note mode
+        if self.captured_trigger_note is not None:
+            trigger_text = f"{note_to_name(self.captured_trigger_note)}"
+            draw.text(self.trigger_position, trigger_text, fill=1)
+        
+        # Show keyboard note on the left middle - specific to single-note mode
+        if self.captured_keyboard_note is not None:
+            keyboard_text = f"{note_to_name(self.captured_keyboard_note)}"
+            draw.text(self.keyboard_position, keyboard_text, fill=1)
     
         # Show "LISTEN" if we haven't completed capture
         if not self.completion_time:
@@ -551,352 +901,3 @@ class Menu:
     def render_into(self, draw: ImageDraw.ImageDraw, w: int, h: int):
         self._top().render(draw, w, h)
 
-class ChordCaptureMenuScreen(Screen):
-    def __init__(self):
-        self.rows = [
-            ("4-Note Capture", self._start_4_note_capture),
-            ("Single Note Capture", self._start_single_note_capture),
-            ("LoNote OctDown", self._toggle_octave_down),
-            ("Footswitch Mode", self._toggle_footswitch_mode),  # New option
-            # Removed ("Back", None) - use back button instead
-        ]
-        self.sel = 0
-        self._chord_capture = None
-        self._cfg = None
-        self._alsa_router = None
-
-    def attach(self, chord_capture, config, alsa_router=None):
-        self._chord_capture = chord_capture
-        self._cfg = config
-        self._alsa_router = alsa_router
-
-    def _start_4_note_capture(self):
-        """Start the traditional 4-note chord capture."""
-        if self._chord_capture:
-            print("Menu: Starting 4-note chord capture")
-            screen = ChordCaptureScreen(self._chord_capture, config=self._cfg)  # Pass config
-            screen.activate()
-            return ScreenResult(push=screen, dirty=True)
-        return ScreenResult(dirty=False)
-
-    def _start_single_note_capture(self):
-        """Start the new single-note capture mode."""
-        if self._chord_capture:
-            print("Menu: Starting single-note capture")
-            screen = SingleNoteCaptureScreen(self._chord_capture, config=self._cfg)  # Pass config
-            if self._alsa_router:
-                screen.set_alsa_router(self._alsa_router)
-            screen.activate()
-            return ScreenResult(push=screen, dirty=True)
-        return ScreenResult(dirty=False)
-    
-    def _toggle_octave_down(self):
-        if self._chord_capture and self._cfg:
-            current = self._cfg.get("octave_down_lowest", False)
-            new_val = not current
-            self._cfg.set("octave_down_lowest", new_val)
-            self._cfg.save()
-            self._chord_capture.set_octave_down_lowest(new_val)
-
-    def _toggle_footswitch_mode(self):
-        """Toggle footswitch mode between 'all' (4-note) and 'single' (1-note)."""
-        if self._cfg:
-            current = self._cfg.get("footswitch_capture_mode", "all")  # Default to "all"
-            new_mode = "single" if current == "all" else "all"
-            self._cfg.set("footswitch_capture_mode", new_mode)
-            self._cfg.save()
-            print(f"Footswitch mode changed to: {new_mode}")
-
-    def _get_footswitch_mode_label(self) -> str:
-        """Get the current footswitch mode as a label."""
-        if not self._cfg:
-            return "All"
-        mode = self._cfg.get("footswitch_capture_mode", "all")
-        return "All" if mode == "all" else "1 Note"
-
-    def on_key(self, key: int) -> ScreenResult:
-        if key == BUTTON_UP:
-            self.sel = (self.sel - 1) % len(self.rows)
-            return ScreenResult(dirty=True)
-        if key == BUTTON_DOWN:
-            self.sel = (self.sel + 1) % len(self.rows)
-            return ScreenResult(dirty=True)
-        if key == BUTTON_SELECT:
-            label, action = self.rows[self.sel]
-            if action:
-                result = action()
-                if result:
-                    return result
-                return ScreenResult(dirty=True)
-        if key == BUTTON_LEFT:
-            return ScreenResult(pop=True)
-        return ScreenResult(dirty=False)
-
-    def render(self, draw: ImageDraw.ImageDraw, w: int, h: int) -> None:
-        draw.rectangle((0,0,w-1,h-1), outline=1, fill=0)
-        draw.text((4, 2), "Chord Capture", fill=1)
-        
-        octave_down = self._cfg.get("octave_down_lowest", False) if self._cfg else False
-        footswitch_mode = self._get_footswitch_mode_label()
-        
-        body = [
-            "4-Note Capture",
-            "Single Note Capture", 
-            f"LoNote OctDown: {'On' if octave_down else 'Off'}",
-            f"Footswitch: {footswitch_mode}",  # Show current footswitch mode
-        ]
-        y = 14
-        for i, line in enumerate(body):
-            prefix = "> " if i == self.sel else "  "
-            draw.text((4, y), prefix + line, fill=1)
-            y += 12
-
-class BaseCaptureScreen(Screen):
-    """Base class for chord capture screens with shared spiral and UI elements."""
-    
-    def __init__(self, chord_capture, turns=20, config_key=None, config=None):
-        self.chord_capture = chord_capture
-        self.active = False
-        # Spiral animation state - EXACT values from test file
-        self.start_time = 0.0
-        self.speed = 3.33  # SPIRAL_SPEED
-        
-        # Turn management
-        self.config_key = config_key  # e.g., "spiral_turns_4_note"
-        self.config = config
-        
-        # Load turns from config or use default
-        if config_key and config:
-            self.turns = config.get(config_key, turns)
-        else:
-            self.turns = turns
-            
-        self.completion_time = None  # When capture was completed
-        
-    def activate(self):
-        """Start capture mode - subclasses should override and call super()."""
-        self.active = True
-        self.start_time = time.monotonic()
-        self.completion_time = None
-        
-    def deactivate(self):
-        """Stop capture mode - subclasses should override and call super()."""
-        self.active = False
-    
-    def on_key(self, key: int) -> ScreenResult:
-        """Handle navigation and back button."""
-        if key == BUTTON_LEFT:  # Back button - abort capture
-            self.deactivate()
-            return ScreenResult(pop=True)
-        elif key == BUTTON_UP:  # Increase spiral turns
-            self.turns = min(50, self.turns + 1)  # Cap at 50 turns
-            self._save_turns_to_config()
-            print(f"Spiral turns increased to {self.turns}")
-            return ScreenResult(dirty=True)
-        elif key == BUTTON_DOWN:  # Decrease spiral turns
-            self.turns = max(1, self.turns - 1)  # Minimum 1 turn
-            self._save_turns_to_config()
-            print(f"Spiral turns decreased to {self.turns}")
-            return ScreenResult(dirty=True)
-        return ScreenResult(dirty=False)
-    
-    def _save_turns_to_config(self):
-        """Save current turns setting to config."""
-        if self.config_key and self.config:
-            self.config.set(self.config_key, self.turns)
-            self.config.save()
-    
-    def _draw_spiral(self, draw, w, h, t):
-        """Draw animated spiral - shared between both capture modes."""
-        cx, cy = w // 2, h // 2
-        radius = min(w, h) * 0.5 - 2
-        
-        # Archimedean spiral r = a + b*theta, animated by phase t
-        turns = self.turns  # Use current turns setting
-        theta_max = 2 * math.pi * turns
-        a = 0.0
-        b = radius / theta_max
-        
-        # Phase offset to animate
-        phase = t * self.speed
-        
-        # Draw the spiral as connected short segments
-        step = 0.03
-        prev = None
-        for k in range(int(theta_max / step) + 1):
-            theta = k * step + phase
-            r = a + b * (k * step)
-            x = int(cx + r * math.cos(theta))
-            y = int(cy + r * math.sin(theta))
-            if prev is not None:
-                try:
-                    draw.line((prev[0], prev[1], x, y), fill=1)
-                except:
-                    pass  # Skip if out of bounds
-            prev = (x, y)
-    
-    def _draw_listen_text(self, draw, w, h):
-        """Draw 'LISTEN' text in center - shared between both capture modes."""
-        listen_text = "LISTEN"
-        bbox = draw.textbbox((0, 0), listen_text)
-        text_w = bbox[2] - bbox[0]
-        text_h = bbox[3] - bbox[1]
-    
-        # Center the text
-        text_x = (w - text_w) // 2
-        text_y = (h - text_h) // 2
-    
-        # Draw "listen" in black with bold effect
-        offsets = [
-            (0, 0),    # original position
-            (1, 0),    # right
-            (0, 1),    # down
-            (1, 1),    # diagonal
-        ]
-        
-        for dx, dy in offsets:
-            draw.text((text_x + dx, text_y + dy), listen_text, fill=0)
-    
-    def _render_base_frame(self, draw, w, h):
-        """Render the basic frame and spiral - shared setup."""
-        # Clear screen with border
-        draw.rectangle((0, 0, w-1, h-1), outline=0, fill=0)
-        draw.rectangle((0, 0, w-1, h-1), outline=1, fill=0)
-    
-        if not self.active:
-            draw.text((4, h//2), "Capture inactive", fill=1)
-            return False  # Don't continue rendering
-    
-        # Calculate time elapsed since start and draw spiral
-        t = time.monotonic() - self.start_time
-        self._draw_spiral(draw, w, h, t)
-        return True  # Continue with specific rendering
-    
-    def update(self) -> ScreenResult:
-        """Base update - subclasses should override."""
-        if not self.active:
-            return ScreenResult(dirty=False)
-        
-        # Check if we should exit after 1 second delay
-        if self.completion_time and (time.monotonic() - self.completion_time) >= 1.0:
-            self.deactivate()
-            return ScreenResult(pop=True)
-            
-        return ScreenResult(dirty=True)
-
-class SingleNoteCaptureScreen(BaseCaptureScreen):
-    def __init__(self, chord_capture, config=None):
-        # Call parent with config settings for single-note mode
-        super().__init__(chord_capture, turns=5, 
-                        config_key="spiral_turns_single", config=config)
-        
-        # Note display positions - specific to single-note mode
-        self.trigger_position = (105, 32)  # Far right, vertical middle
-        self.keyboard_position = (4, 32)   # Far left, vertical middle
-        
-        # Single-note capture state
-        self.captured_trigger_note = None
-        self.captured_keyboard_note = None
-        self.waiting_for_trigger = True
-        
-        # ALSA router reference
-        self.alsa_router = None
-        self._original_keyboard_routing = False
-        self._ddti_in = None
-        self._prev_kb_thru = None
-        self._last_ddti_hit_ts = 0.0
-        self._debounce_s = 0.12
-        self._min_vel = 8
-    
-    # The on_key method is now inherited from BaseCaptureScreen
-    # so it automatically handles UP/DOWN for spiral turns
-    
-    # ... rest of methods unchanged
-
-    def update(self) -> ScreenResult:
-        if not self.active:
-            return ScreenResult(dirty=False)
-
-        # --- NEW: always allow DDTi hits to (re)select trigger until keyboard note is taken ---
-        if self._ddti_in is not None and self.captured_keyboard_note is None:
-            for msg in list(self._ddti_in.iter_pending()):
-                if msg.type == 'note_on' and getattr(msg, 'velocity', 0) >= self._min_vel:
-                    now = time.monotonic()
-                    if now - self._last_ddti_hit_ts >= self._debounce_s:
-                        self._last_ddti_hit_ts = now
-                        self.captured_trigger_note = msg.note
-                        self.waiting_for_trigger = False
-                        print(f"Selected DDTi trigger: {note_to_name(msg.note)} ({msg.note}) [rollover enabled]")
-
-        # If we have a trigger (possibly updated above) but no keyboard note yet, read keyboard
-        if (self.captured_trigger_note is not None) and (self.captured_keyboard_note is None):
-            for msg in list(self.chord_capture.midi.iter_input()):
-                if msg.type == 'note_on' and getattr(msg, 'velocity', 0) > 0:
-                    self.captured_keyboard_note = msg.note
-                    print(f"Captured keyboard note: {note_to_name(msg.note)} ({msg.note})")
-                    self._send_single_note_change()
-                    self.completion_time = time.monotonic()
-                    break
-
-        return super().update()
-    
-    def _is_ddti_message(self, msg) -> bool:
-        """Determine if a MIDI message came from DDTi (channel 10)."""
-        return msg.channel == 9  # Channel 10 is index 9
-
-    def _is_keyboard_message(self, msg) -> bool:
-        """Determine if a MIDI message came from keyboard (not channel 10)."""
-        return msg.channel != 9  # Any channel except 10
-    
-    def _send_single_note_change(self):
-        """Send SysEx to change just one trigger's note."""
-        if self.captured_trigger_note is None or self.captured_keyboard_note is None:
-            return
-            
-        try:
-            from features.ddti import DDTi
-            ddti = DDTi()
-            # Get the current 4-note set you intend to send. If you track it elsewhere, use that.
-            # Fallback: read prior notes from your own last chord buffer:
-            current = getattr(self.chord_capture, "last_notes", [60, 64, 67, 72])  # placeholder fallback
-
-            # Find the index to replace by matching the trigger note
-            try:
-                idx = current.index(self.captured_trigger_note)
-            except ValueError:
-                # If the exact note isn't present, choose a sensible default (e.g., slot 0)
-                idx = 0
-
-            old = current[idx]
-            current[idx] = self.captured_keyboard_note
-            print(f"Changing trigger {idx} from {note_to_name(old)} to {note_to_name(self.captured_keyboard_note)}")
-
-            # Build + send
-            from mido import Message
-            msg = ddti.build_sysex(current)
-            sent = self.chord_capture.midi.send(msg)
-            if sent:
-                print(f"Sent single-note SysEx: {len(msg.bin()) if hasattr(msg, 'bin') else 'OK'}")
-            else:
-                print("Failed to send SysEx (MIDI out not open?)")
-        except Exception as e:
-            print(f"single-note SysEx error: {e}")
-    
-    def render(self, draw: ImageDraw.ImageDraw, w: int, h: int) -> None:
-        # Use base class frame rendering
-        if not self._render_base_frame(draw, w, h):
-            return  # Inactive, base class handled it
-    
-        # Show trigger note on the right middle - specific to single-note mode
-        if self.captured_trigger_note is not None:
-            trigger_text = f"{note_to_name(self.captured_trigger_note)}"
-            draw.text(self.trigger_position, trigger_text, fill=1)
-        
-        # Show keyboard note on the left middle - specific to single-note mode
-        if self.captured_keyboard_note is not None:
-            keyboard_text = f"{note_to_name(self.captured_keyboard_note)}"
-            draw.text(self.keyboard_position, keyboard_text, fill=1)
-    
-        # Show "LISTEN" if we haven't completed capture
-        if not self.completion_time:
-            self._draw_listen_text(draw, w, h)
