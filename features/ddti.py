@@ -5,10 +5,19 @@
 """
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
+from dataclasses import dataclass
+import time
 
 from mido import Message
 
 from constants import DDTI_TEMPLATE_PATH, DDTI_NOTE_OFFSETS
+
+@dataclass
+class _Kit0Cache:
+    bulk: Optional[bytes] = None      # 76-byte frame (opcode 70 / kit index 0)
+    param: Optional[bytes] = None     # 16-byte frame (opcode 10 / kit index 0)
+    notes: Optional[List[int]] = None
+    ts: Optional[float] = None
 
 class DDTi:
     def __init__(self, template_path: Path = DDTI_TEMPLATE_PATH, note_offsets: List[int] = DDTI_NOTE_OFFSETS):
@@ -19,6 +28,10 @@ class DDTi:
         # Track current DDTi state for partial updates
         self._current_state: Optional[List[int]] = None
         
+        # Session-only kit0 cache (fresh each boot)
+        self._kit0 = _Kit0Cache()
+        self._bulk_note_offsets = [11,17,23,29]  # verify against 76-byte frame
+
     def set_current_state(self, notes: List[int]):
         """Explicitly set the known current state of the DDTi."""
         if len(notes) != len(self.note_offsets):
@@ -143,3 +156,65 @@ class DDTi:
     def send_sysex(self, out_port, notes: Iterable[int]) -> None:
         msg = self.build_sysex(notes)
         out_port.send(msg)
+
+    # --- Kit0 ingestion / stateless single-note support (session only) ---
+    def ingest_sysex_frame(self, data: bytes):
+        """
+        Call this for every incoming SysEx from the DDTi IN port.
+        Captures kit0 bank frames (bulk 76B or param 16B). No persistence.
+        """
+        ln = len(data)
+        if ln == 76 and ln > 10 and data[7] == 70 and data[8] == 1 and data[9] == 0:
+            self._kit0.bulk = bytes(data)
+            self._kit0.notes = None
+            self._kit0.ts = time.time()
+            print("DDTi: Ingested kit0 bulk frame")
+        elif ln == 16 and ln > 10 and data[7] == 10 and data[8] == 2 and data[9] == 0:
+            self._kit0.param = bytes(data)
+            # param optional; do not reset notes
+            print("DDTi: Ingested kit0 param frame")
+
+    def have_kit0_bulk(self) -> bool:
+        return self._kit0.bulk is not None
+
+    def kit0_age_seconds(self) -> Optional[float]:
+        return (time.time() - self._kit0.ts) if self._kit0.ts else None
+
+    def extract_kit0_notes(self) -> Optional[List[int]]:
+        if not self._kit0.bulk:
+            return None
+        if self._kit0.notes is not None:
+            return list(self._kit0.notes)
+        if max(self._bulk_note_offsets) >= len(self._kit0.bulk):
+            print("DDTi: bulk frame too short for note offsets")
+            return None
+        self._kit0.notes = [self._kit0.bulk[o] & 0x7F for o in self._bulk_note_offsets]
+        return list(self._kit0.notes)
+
+    def build_kit0_single_note_patch(self, old_note: int, new_note: int) -> Optional[Message]:
+        """
+        Replace ALL occurrences of old_note with new_note in cached kit0 bulk frame.
+        Returns full 76-byte kit0 frame Message or None if unavailable / no change.
+        """
+        if not self.have_kit0_bulk():
+            print("DDTi: No kit0 bulk cached (press DUMP on module)")
+            return None
+        notes = self.extract_kit0_notes()
+        if notes is None:
+            return None
+        matches = [i for i,n in enumerate(notes) if n == old_note]
+        if not matches:
+            print(f"DDTi: old_note {old_note} not found in kit0 notes {notes}")
+            return None
+        if old_note == new_note:
+            print("DDTi: old and new note identical; skipping")
+            return None
+        buf = bytearray(self._kit0.bulk)
+        for idx in matches:
+            off = self._bulk_note_offsets[idx]
+            buf[off] = new_note & 0x7F
+            notes[idx] = new_note & 0x7F
+        self._kit0.bulk = bytes(buf)
+        self._kit0.notes = notes
+        print(f"DDTi: Patched kit0 {old_note}->{new_note} at indices {matches}; new notes {notes}")
+        return Message('sysex', data=bytes(buf))

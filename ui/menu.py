@@ -576,7 +576,7 @@ class VariableTriggerCaptureScreen(BaseCaptureScreen):
             
         except Exception as e:
             print(f"Variable-trigger SysEx error: {e}")
-    
+
 class UtilitiesScreen(Screen):
     def __init__(self):
         self.rows = [
@@ -689,11 +689,59 @@ class UtilitiesScreen(Screen):
             draw.text((4, y), prefix + line, fill=1)
             y += 12
 
+class DDTiSyncScreen(Screen):
+    """
+    Screen that waits for a manual DDTi bank dump to ingest kit0.
+    User triggers dump on the hardware; we watch incoming MIDI for kit0 bulk frame.
+    """
+    def __init__(self, chord_capture):
+        self._cc = chord_capture
+        self._done = False
+        self._status = "Waiting for dump..."
+        self._last_notes = None
+        self._start_ts = time.monotonic()
+
+    def render(self, draw: ImageDraw.ImageDraw, w: int, h: int) -> None:
+        draw.rectangle((0,0,w-1,h-1), outline=1, fill=0)
+        draw.text((4,2), "DDTi Sync", fill=1)
+        draw.text((4,14), self._status[:18], fill=1)
+        if self._last_notes:
+            draw.text((4,26), "Notes:"+"/".join(str(n) for n in self._last_notes), fill=1)
+        age = self._cc.ddti.kit0_age_seconds()
+        if age is not None:
+            draw.text((4,38), f"Age:{int(age)}s", fill=1)
+        if self._done:
+            draw.text((4,50), "OK - Back", fill=1)
+        else:
+            draw.text((4,50), "Press DUMP", fill=1)
+
+    def on_key(self, key: int) -> ScreenResult:
+        if key == BUTTON_LEFT:
+            return ScreenResult(pop=True)
+        if key == BUTTON_SELECT and self._done:
+            return ScreenResult(pop=True)
+        return ScreenResult(dirty=False)
+
+    def update(self) -> ScreenResult:
+        if not self._done and self._cc.ddti.have_kit0_bulk():
+            notes = self._cc.ddti.extract_kit0_notes()
+            if notes:
+                self._last_notes = notes
+                self._status = "Kit0 captured"
+                self._done = True
+                return ScreenResult(dirty=True)
+        # keep redrawing every ~0.5s to show age
+        if (time.monotonic() - self._start_ts) > 0.5:
+            self._start_ts = time.monotonic()
+            return ScreenResult(dirty=True)
+        return ScreenResult(dirty=False)
+
 class HomeScreen(Screen):
     def __init__(self):
         self.items = [
-            "Chord Capture",  # Changed from "Initiate Chord Capture"
+            "Chord Capture",
             "MIDI Settings",
+            "DDTi Sync",        # NEW
             "Utilities",
         ]
         self.sel = 0
@@ -714,6 +762,8 @@ class HomeScreen(Screen):
                 return ScreenResult(push=ChordCaptureMenuScreen(), dirty=True)
             elif label == "Utilities":
                 return ScreenResult(push=UtilitiesScreen(), dirty=True)
+            elif label == "DDTi Sync":
+                return ScreenResult(push=DDTiSyncScreen(self._chord_capture), dirty=True)
             return ScreenResult(dirty=False)
         return ScreenResult(dirty=False)
 
