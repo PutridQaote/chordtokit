@@ -384,162 +384,107 @@ class SingleNoteCaptureScreen(BaseCaptureScreen):
         self.alsa_router = router
         
     def activate(self):
-        """Start single note capture mode."""
+        """Start single note capture mode (no extra port, no routing changes)."""
         super().activate()
         self.captured_trigger_note = None
         self.captured_keyboard_note = None
         self.waiting_for_trigger = True
-        
-        # Open dedicated DDTi monitoring input
-        import mido
-        ddti_name = self.chord_capture.midi.get_out_port_name()
-        print(f"Opening DDTi monitoring on: {ddti_name}")
-        if ddti_name:
-            try:
-                self._ddti_in = mido.open_input(ddti_name)
-                print("✓ DDTi monitoring active")
-            except Exception as e:
-                print(f"✗ DDTi monitoring failed: {e}")
-                self._ddti_in = None
-        
-        # Temporarily disable keyboard thru
-        if self.alsa_router:
-            self._prev_kb_thru = self.alsa_router.get_keyboard_thru()
-            if self._prev_kb_thru:
-                print("Temporarily disabling keyboard thru")
-                self.alsa_router.set_keyboard_thru(False)
-                
-        # Flush
-        list(self.chord_capture.midi.iter_input())
-        if self._ddti_in:
-            list(self._ddti_in.iter_pending())
-        
+        print("SingleNote: Activated (using shared DDTi + dedicated Midi ddti input)")
+
     def deactivate(self):
         """Stop single note capture mode."""
-        # Close DDTi monitoring
-        if self._ddti_in:
-            try:
-                self._ddti_in.close()
-                print("✓ DDTi monitoring closed")
-            except:
-                pass
-            self._ddti_in = None
-        
-        # Restore keyboard thru
-        if self.alsa_router and self._prev_kb_thru is not None:
-            if self._prev_kb_thru:
-                print("Restoring keyboard thru")
-                self.alsa_router.set_keyboard_thru(True)
-            self._prev_kb_thru = None
-        
         super().deactivate()
+        print("SingleNote: Deactivated")
 
     def update(self) -> ScreenResult:
         if not self.active:
             return ScreenResult(dirty=False)
 
-        # --- NEW: always allow DDTi hits to (re)select trigger until keyboard note is taken ---
-        if self._ddti_in is not None and self.captured_keyboard_note is None:
-            for msg in list(self._ddti_in.iter_pending()):
-                if msg.type == 'note_on' and getattr(msg, 'velocity', 0) >= self._min_vel:
-                    now = time.monotonic()
-                    if now - self._last_ddti_hit_ts >= self._debounce_s:
-                        self._last_ddti_hit_ts = now
-                        self.captured_trigger_note = msg.note
-                        self.waiting_for_trigger = False
-                        print(f"Selected DDTi trigger: {note_to_name(msg.note)} ({msg.note}) [rollover enabled]")
+        midi = self.chord_capture.midi
+        ddti = self.chord_capture.ddti
 
-        # If we have a trigger (possibly updated above) but no keyboard note yet, read keyboard
-        if (self.captured_trigger_note is not None) and (self.captured_keyboard_note is None):
-            for msg in list(self.chord_capture.midi.iter_input()):
+        # Ingest any DDTi frames + capture trigger hits (channel 10 note_on)
+        for msg in midi.iter_ddti_all():
+            if msg.type == 'sysex':
+                try:
+                    ddti.ingest_sysex_frame(bytes(msg.data))
+                except Exception as e:
+                    print(f"SingleNote: Sysex ingest error: {e}")
+            elif (msg.type == 'note_on' and msg.velocity > 0
+                  and self.captured_keyboard_note is None):
+                # Treat every pad hit as (re)selecting trigger until keyboard note chosen
+                self.captured_trigger_note = msg.note
+                self.waiting_for_trigger = False
+                print(f"SingleNote: Selected trigger note {msg.note}")
+
+        # If we have trigger but not keyboard note, read keyboard input
+        if (self.captured_trigger_note is not None and
+            self.captured_keyboard_note is None):
+            for msg in self.chord_capture.midi.iter_input():
                 if msg.type == 'note_on' and getattr(msg, 'velocity', 0) > 0:
                     self.captured_keyboard_note = msg.note
-                    print(f"Captured keyboard note: {note_to_name(msg.note)} ({msg.note})")
+                    print(f"SingleNote: Captured keyboard note {msg.note}")
                     self._send_single_note_change()
                     self.completion_time = time.monotonic()
                     break
 
         return super().update()
-    
+
     def _send_single_note_change(self):
-        """Send SysEx to change just one trigger's note."""
+        """Send SysEx patch for kit0 replacing all occurrences of trigger note."""
         if self.captured_trigger_note is None or self.captured_keyboard_note is None:
             return
-            
-        try:
-            from features.ddti import DDTi
-            ddti = DDTi()
-            
-            # Get the current DDTi configuration by reading the last sent chord
-            # We need to track the actual DDTi state, not use a hardcoded fallback
-            if hasattr(self.chord_capture, "last_sent_chord"):
-                current = list(self.chord_capture.last_sent_chord)
-                print(f"Using last sent chord: {current}")
-            else:
-                # If we don't have the last chord, we can't safely do single-note changes
-                print("ERROR: No last chord available - cannot determine current DDTi state")
-                print("Please capture a 4-note chord first to establish DDTi state")
-                return
+        ddti = self.chord_capture.ddti
 
-            # Find the index to replace by matching the trigger note
-            try:
-                idx = current.index(self.captured_trigger_note)
-                print(f"Found trigger note {self.captured_trigger_note} at index {idx}")
-            except ValueError:
-                print(f"ERROR: Trigger note {self.captured_trigger_note} not found in current chord {current}")
-                print("DDTi state may have changed - please capture a 4-note chord to resync")
-                return
+        if not ddti.have_kit0_bulk():
+            print("SingleNote: No kit0 bulk cached. Run DDTi Sync first.")
+            return
 
-            old = current[idx]
-            current[idx] = self.captured_keyboard_note
-            print(f"Changing trigger {idx} from {note_to_name(old)} ({old}) to {note_to_name(self.captured_keyboard_note)} ({self.captured_keyboard_note})")
-            print(f"Full chord change: {[old if i != idx else self.captured_keyboard_note for i, old in enumerate(current)]} -> {current}")
+        old_note = self.captured_trigger_note
+        new_note = self.captured_keyboard_note
 
-            # Build + send
-            msg = ddti.build_sysex(current)
-            sent = self.chord_capture.midi.send(msg)
-            if sent:
-                print(f"Sent single-note SysEx: {len(msg.data)} bytes")
-                # Update the chord_capture's last sent chord
-                self.chord_capture.last_sent_chord = current[:]
-            else:
-                print("Failed to send SysEx (MIDI out not open?)")
-        except Exception as e:
-            print(f"single-note SysEx error: {e}")
-    
+        msg = ddti.build_kit0_single_note_patch(old_note, new_note)
+        if not msg:
+            print("SingleNote: Patch build failed (old note not found or no change).")
+            return
+
+        sent = self.chord_capture.midi.send(msg)
+        if sent:
+            print(f"SingleNote: Sent kit0 single-note patch ({len(msg.data)} bytes)")
+        else:
+            print("SingleNote: MIDI send failed")
+
     def on_key(self, key: int) -> ScreenResult:
-        """Handle back button to exit single-note capture."""
-        if key == BUTTON_LEFT:  # Back button - abort capture
+        if key == BUTTON_LEFT:
             self.deactivate()
             return ScreenResult(pop=True)
-        elif key == BUTTON_UP:  # Increase spiral turns
+        elif key == BUTTON_UP:
             self.turns = min(50, self.turns + 1)
             self._save_turns_to_config()
-            print(f"Spiral turns increased to {self.turns}")
             return ScreenResult(dirty=True)
-        elif key == BUTTON_DOWN:  # Decrease spiral turns
+        elif key == BUTTON_DOWN:
             self.turns = max(1, self.turns - 1)
             self._save_turns_to_config()
-            print(f"Spiral turns decreased to {self.turns}")
             return ScreenResult(dirty=True)
         return ScreenResult(dirty=False)
-    
+
     def render(self, draw: ImageDraw.ImageDraw, w: int, h: int) -> None:
-        # Use base class frame rendering
         if not self._render_base_frame(draw, w, h):
-            return  # Inactive, base class handled it
-    
-        # Show trigger note on the right middle - specific to single-note mode
+            return
+        ddti = self.chord_capture.ddti
+        if ddti.have_kit0_bulk():
+            notes = ddti.extract_kit0_notes()
+            if notes:
+                draw.text((4, 4), "Kit0:" + "/".join(str(n) for n in notes), fill=1)
+        else:
+            draw.text((4, 4), "Need DDTi Sync", fill=1)
+
         if self.captured_trigger_note is not None:
-            trigger_text = f"T:{note_to_name(self.captured_trigger_note)}"
-            draw.text(self.trigger_position, trigger_text, fill=1)
-        
-        # Show keyboard note on the left middle - specific to single-note mode
+            draw.text(self.trigger_position,
+                      f"T:{note_to_name(self.captured_trigger_note)}", fill=1)
         if self.captured_keyboard_note is not None:
-            keyboard_text = f"K:{note_to_name(self.captured_keyboard_note)}"
-            draw.text(self.keyboard_position, keyboard_text, fill=1)
-    
-        # Show "LISTEN" if we haven't completed capture
+            draw.text(self.keyboard_position,
+                      f"K:{note_to_name(self.captured_keyboard_note)}", fill=1)
         if not self.completion_time:
             self._draw_listen_text(draw, w, h)
 

@@ -192,6 +192,13 @@ class Midi:
             return []
         return [m for m in self._ddti_in_port.iter_pending() if m.type == 'sysex']
 
+    # NEW: iterate ALL pending DDTi input messages (notes + sysex)
+    def iter_ddti_all(self):
+        """Return list of all pending messages from DDTi input port."""
+        if not self._ddti_in_port:
+            return []
+        return list(self._ddti_in_port.iter_pending())
+
     def get_in_port_name(self) -> Optional[str]:
         # Currently-open keyboard input (if any)
         try:

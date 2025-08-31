@@ -14,7 +14,7 @@ DEFAULTS: Dict[str, Any] = {
     "midi_out_substr": "triggerio",
     
     # ALSA Hardware Routing (replaces old midi_thru)
-    "alsa_keyboard_thru": False,  # Keyboard → External devices
+    "alsa_keyboard_thru": True,  # Keyboard → External devices
     "alsa_ddti_thru": True,       # DDTi → External devices (default ON)
 
     # UI / behavior
