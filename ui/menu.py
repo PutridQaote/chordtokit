@@ -942,8 +942,11 @@ class DDTiSyncScreen(Screen):
             text2_x = (w - text2_w) // 2
             draw.text((text2_x, y + 12), text2, fill=1)
             
-            # Left-aligned instructions (not centered)
-            draw.text((4, y + 32), "(Function & Value Up)", fill=1)
+            text3 = "(Function & Value Up)"
+            bbox3 = draw.textbbox((0, 0), text3)
+            text3_w = bbox3[2] - bbox3[0]
+            text3_x = (w - text3_w) // 2
+            draw.text((text3_x, y + 32), text3, fill=1)
 
     def on_key(self, key: int) -> ScreenResult:
         if key == BUTTON_LEFT:
