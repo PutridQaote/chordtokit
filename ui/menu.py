@@ -904,23 +904,46 @@ class DDTiSyncScreen(Screen):
         ddti_port = self._cc.midi.get_ddti_in_port_name()
         if not ddti_port:
             draw.text((4, y), "No DDTi input ✗", fill=1)
-        y += 10
+            y += 10
         
         # Show SysEx count only
         # draw.text((4, y), f"SysEx: {self._sysex_count}", fill=1)
+                
+        # One blank line after header
         y += 10
         
-        # Skip the Kit0 status line entirely
-        # Skip the debug message line entirely
-        
-        # Instructions - updated text
+        # Instructions - only center the main message
         if self._done:
-            draw.text((4, 45), "Kit0 captured!", fill=1)
-            draw.text((4, 56), "Auto-exiting...", fill=1)
+            # Center "Kit0 captured!"
+            text1 = "Kit0 captured!"
+            bbox1 = draw.textbbox((0, 0), text1)
+            text1_w = bbox1[2] - bbox1[0]
+            text1_x = (w - text1_w) // 2
+            draw.text((text1_x, y), text1, fill=1)
+            
+            # Center "Auto-exiting..."
+            text2 = "Auto-exiting..."
+            bbox2 = draw.textbbox((0, 0), text2)
+            text2_w = bbox2[2] - bbox2[0]
+            text2_x = (w - text2_w) // 2
+            draw.text((text2_x, y + 12), text2, fill=1)
         else:
-            draw.text((4, 35), "Waiting for DDTi", fill=1)
-            draw.text((4, 45), "SysEx Dump...", fill=1)
-            draw.text((4, 56), "(Function & Value Up)", fill=1)
+            # Center "Waiting for DDTi"
+            text1 = "Waiting for DDTi"
+            bbox1 = draw.textbbox((0, 0), text1)
+            text1_w = bbox1[2] - bbox1[0]
+            text1_x = (w - text1_w) // 2
+            draw.text((text1_x, y), text1, fill=1)
+            
+            # Center "SysEx Dump..."
+            text2 = "SysEx Dump..."
+            bbox2 = draw.textbbox((0, 0), text2)
+            text2_w = bbox2[2] - bbox2[0]
+            text2_x = (w - text2_w) // 2
+            draw.text((text2_x, y + 12), text2, fill=1)
+            
+            # Left-aligned instructions (not centered)
+            draw.text((4, y + 32), "(Function & Value Up)", fill=1)
 
     def on_key(self, key: int) -> ScreenResult:
         if key == BUTTON_LEFT:
