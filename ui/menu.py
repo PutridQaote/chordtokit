@@ -910,7 +910,7 @@ class DDTiSyncScreen(Screen):
         # draw.text((4, y), f"SysEx: {self._sysex_count}", fill=1)
                 
         # One blank line after header
-        y += 8
+        y += 6
         
         # Instructions - only center the main message
         if self._done:
