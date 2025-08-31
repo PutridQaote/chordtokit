@@ -43,9 +43,9 @@ class ChordCaptureMenuScreen(Screen):
         self.rows = [
             ("4-Note Capture", self._start_4_note_capture),
             ("Single Note Capture", self._start_single_note_capture),
-            ("LoNote OctDown", self._toggle_octave_down),
-            ("Footswitch Mode", self._toggle_footswitch_mode),  # New option
-            # Removed ("Back", None) - use back button instead
+            ("Variable Trigger Capture", self._start_variable_trigger_capture),  # NEW
+            ("Footswitch Mode", self._toggle_footswitch_mode),
+            # Removed LoNote OctDown - moved to utilities
         ]
         self.sel = 0
         self._chord_capture = None
@@ -77,13 +77,16 @@ class ChordCaptureMenuScreen(Screen):
             return ScreenResult(push=screen, dirty=True)
         return ScreenResult(dirty=False)
     
-    def _toggle_octave_down(self):
-        if self._chord_capture and self._cfg:
-            current = self._cfg.get("octave_down_lowest", False)
-            new_val = not current
-            self._cfg.set("octave_down_lowest", new_val)
-            self._cfg.save()
-            self._chord_capture.set_octave_down_lowest(new_val)
+    def _start_variable_trigger_capture(self):
+        """Start the new variable-trigger capture mode."""
+        if self._chord_capture:
+            print("Menu: Starting variable-trigger capture")
+            screen = VariableTriggerCaptureScreen(self._chord_capture, config=self._cfg)
+            if self._alsa_router:
+                screen.set_alsa_router(self._alsa_router)
+            screen.activate()
+            return ScreenResult(push=screen, dirty=True)
+        return ScreenResult(dirty=False)
 
     def _toggle_footswitch_mode(self):
         """Toggle footswitch mode between 'all' (4-note) and 'single' (1-note)."""
@@ -123,14 +126,13 @@ class ChordCaptureMenuScreen(Screen):
         draw.rectangle((0,0,w-1,h-1), outline=1, fill=0)
         draw.text((4, 2), "Chord Capture", fill=1)
         
-        octave_down = self._cfg.get("octave_down_lowest", False) if self._cfg else False
         footswitch_mode = self._get_footswitch_mode_label()
         
         body = [
             "4-Note Capture",
-            "Single Note Capture", 
-            f"LoNote OctDown: {'On' if octave_down else 'Off'}",
-            f"Footswitch: {footswitch_mode}",  # Show current footswitch mode
+            "Single Note Capture",
+            "Variable Trigger Capture",  # NEW
+            f"Footswitch: {footswitch_mode}",
         ]
         y = 14
         for i, line in enumerate(body):
@@ -474,17 +476,17 @@ class SingleNoteCaptureScreen(BaseCaptureScreen):
         ddti = self.chord_capture.ddti
         if ddti.have_kit0_bulk():
             notes = ddti.extract_kit0_notes()
-            if notes:
-                draw.text((4, 4), "Kit0:" + "/".join(str(n) for n in notes), fill=1)
+            # if notes:
+            #     draw.text((4, 4), "Kit0:" + "/".join(str(n) for n in notes), fill=1)
         else:
             draw.text((4, 4), "Need DDTi Sync", fill=1)
 
         if self.captured_trigger_note is not None:
             draw.text(self.trigger_position,
-                      f"T:{note_to_name(self.captured_trigger_note)}", fill=1)
+                      f"{note_to_name(self.captured_trigger_note)}", fill=1)
         if self.captured_keyboard_note is not None:
             draw.text(self.keyboard_position,
-                      f"K:{note_to_name(self.captured_keyboard_note)}", fill=1)
+                      f"{note_to_name(self.captured_keyboard_note)}", fill=1)
         if not self.completion_time:
             self._draw_listen_text(draw, w, h)
 
@@ -493,39 +495,204 @@ class VariableTriggerCaptureScreen(BaseCaptureScreen):
         super().__init__(chord_capture, turns=15, 
                         config_key="spiral_turns_variable", config=config)
         
-        # Variable-trigger state
+        # Variable-trigger state - TWO DISTINCT PHASES
         self.captured_triggers: List[int] = []  # DDTi notes that were hit
         self.captured_keyboard_notes: List[int] = []  # Keyboard notes to assign
         self.trigger_capture_phase = True  # True = capturing triggers, False = capturing keyboard
         
+        # ALSA router reference (same as SingleNoteCaptureScreen)
+        self.alsa_router = None
+        self._last_ddti_hit_ts = 0.0
+        self._debounce_s = 0.12
+        self._min_vel = 8
+
+    def set_alsa_router(self, router):
+        """Set the ALSA router reference."""
+        self.alsa_router = router
+
+    def activate(self):
+        """Start variable trigger capture mode."""
+        super().activate()
+        self.captured_triggers.clear()
+        self.captured_keyboard_notes.clear()
+        self.trigger_capture_phase = True
+        print("VariableTrigger: Activated - capture DDTi triggers first, then keyboard notes")
+
+    def deactivate(self):
+        """Stop variable trigger capture mode."""
+        super().deactivate()
+        print("VariableTrigger: Deactivated")
+
+    def update(self) -> ScreenResult:
+        if not self.active:
+            return ScreenResult(dirty=False)
+
+        midi = self.chord_capture.midi
+        ddti = self.chord_capture.ddti
+
+        if self.trigger_capture_phase:
+            # PHASE 1: Capture DDTi trigger hits
+            for msg in midi.iter_ddti_all():
+                if msg.type == 'sysex':
+                    try:
+                        ddti.ingest_sysex_frame(bytes(msg.data))
+                    except Exception as e:
+                        print(f"VariableTrigger: SysEx ingest error: {e}")
+                elif (msg.type == 'note_on' and msg.velocity >= self._min_vel):
+                    now = time.monotonic()
+                    if now - self._last_ddti_hit_ts >= self._debounce_s:
+                        self._last_ddti_hit_ts = now
+                        # Add trigger if not already captured (avoid duplicates)
+                        if msg.note not in self.captured_triggers:
+                            self.captured_triggers.append(msg.note)
+                            print(f"VariableTrigger: Added trigger {note_to_name(msg.note)} ({msg.note})")
+                            if len(self.captured_triggers) >= 4:  # Max 4 triggers
+                                print(f"VariableTrigger: Max triggers reached - advance to keyboard phase")
+                                self.trigger_capture_phase = False
+        else:
+            # PHASE 2: Capture keyboard notes (same count as triggers)
+            needed_keyboard_notes = len(self.captured_triggers) - len(self.captured_keyboard_notes)
+            if needed_keyboard_notes > 0:
+                for msg in midi.iter_input():
+                    if msg.type == 'note_on' and msg.velocity > 0:
+                        self.captured_keyboard_notes.append(msg.note)
+                        print(f"VariableTrigger: Added keyboard note {note_to_name(msg.note)} ({msg.note})")
+                        
+                        # Check if we have all needed keyboard notes
+                        if len(self.captured_keyboard_notes) >= len(self.captured_triggers):
+                            print(f"VariableTrigger: All notes captured - sending SysEx")
+                            self._send_variable_trigger_change()
+                            self.completion_time = time.monotonic()
+                            break
+
+        return super().update()
+
     def _send_variable_trigger_change(self):
         """Send SysEx for variable number of triggers."""
         if not self.captured_triggers or not self.captured_keyboard_notes:
+            print("VariableTrigger: No triggers or keyboard notes to send")
             return
         
         if len(self.captured_triggers) != len(self.captured_keyboard_notes):
-            print("Error: Trigger and keyboard note counts don't match")
+            print(f"VariableTrigger: Mismatch - {len(self.captured_triggers)} triggers, {len(self.captured_keyboard_notes)} keyboard notes")
+            return
+
+        if not self.chord_capture.ddti.have_kit0_bulk():
+            print("VariableTrigger: No kit0 bulk cached. Run DDTi Sync first.")
             return
             
         try:
-            # Use the new variable-trigger method
-            sysex_msg = self.chord_capture.ddti.build_trigger_change_sysex(
-                self.captured_triggers, self.captured_keyboard_notes
-            )
-            sent = self.chord_capture.midi.send(sysex_msg)
+            # Use the kit0 single-note patch method for each trigger/keyboard pair
+            for trigger_note, keyboard_note in zip(self.captured_triggers, self.captured_keyboard_notes):
+                msg = self.chord_capture.ddti.build_kit0_single_note_patch(trigger_note, keyboard_note)
+                if msg:
+                    sent = self.chord_capture.midi.send(msg)
+                    if sent:
+                        print(f"VariableTrigger: Updated trigger {note_to_name(trigger_note)} -> {note_to_name(keyboard_note)}")
+                    else:
+                        print(f"VariableTrigger: Failed to send update for {note_to_name(trigger_note)}")
+                else:
+                    print(f"VariableTrigger: Could not build patch for trigger {note_to_name(trigger_note)}")
             
-            if sent:
-                print(f"Updated {len(self.captured_triggers)} triggers with variable SysEx")
-                for trigger, note in zip(self.captured_triggers, self.captured_keyboard_notes):
-                    print(f"  Trigger {note_to_name(trigger)} -> {note_to_name(note)}")
+            print(f"VariableTrigger: Completed updates for {len(self.captured_triggers)} triggers")
             
         except Exception as e:
-            print(f"Variable-trigger SysEx error: {e}")
+            print(f"VariableTrigger: SysEx error: {e}")
+
+    def on_key(self, key: int) -> ScreenResult:
+        if key == BUTTON_LEFT:
+            self.deactivate()
+            return ScreenResult(pop=True)
+        elif key == BUTTON_UP:
+            self.turns = min(50, self.turns + 1)
+            self._save_turns_to_config()
+            return ScreenResult(dirty=True)
+        elif key == BUTTON_DOWN:
+            self.turns = max(1, self.turns - 1)
+            self._save_turns_to_config()
+            return ScreenResult(dirty=True)
+        elif key == BUTTON_SELECT and self.trigger_capture_phase and self.captured_triggers:
+            # Allow manual advance to keyboard phase
+            print("VariableTrigger: Manual advance to keyboard phase")
+            self.trigger_capture_phase = False
+            return ScreenResult(dirty=True)
+        return ScreenResult(dirty=False)
+
+    def render(self, draw: ImageDraw.ImageDraw, w: int, h: int) -> None:
+        if not self._render_base_frame(draw, w, h):
+            return
+
+        ddti = self.chord_capture.ddti
+        if not ddti.have_kit0_bulk():
+            draw.text((4, 4), "Need DDTi Sync", fill=1)
+
+        # Calculate vertical positions for up to 4 notes
+        # Screen height is ~64, with border we have ~60 usable pixels
+        # Top margin: 10, bottom margin: 10, leaves 44 pixels for notes
+        available_height = h - 20  # 10px top + 10px bottom margins
+        top_y = 10
+
+        # Display captured DDTi triggers on the RIGHT side
+        if self.captured_triggers:
+            max_triggers = min(len(self.captured_triggers), 4)  # Max 4 triggers
+            if max_triggers == 1:
+                trigger_positions = [top_y + available_height // 2]  # Center
+            else:
+                # Distribute evenly from top to bottom
+                step = available_height // (max_triggers - 1) if max_triggers > 1 else 0
+                trigger_positions = [top_y + i * step for i in range(max_triggers)]
+
+            for i, trigger_note in enumerate(self.captured_triggers[:4]):
+                y_pos = trigger_positions[i]
+                note_text = note_to_name(trigger_note)
+                # Right-aligned: screen width (128) - text width - margin
+                bbox = draw.textbbox((0, 0), note_text)
+                text_w = bbox[2] - bbox[0]
+                x_pos = w - text_w - 4
+                draw.text((x_pos, y_pos), note_text, fill=1)
+
+        # Display captured keyboard notes on the LEFT side
+        if self.captured_keyboard_notes:
+            max_keyboard = min(len(self.captured_keyboard_notes), 4)  # Max 4 notes
+            if max_keyboard == 1:
+                keyboard_positions = [top_y + available_height // 2]  # Center
+            else:
+                # Distribute evenly from top to bottom
+                step = available_height // (max_keyboard - 1) if max_keyboard > 1 else 0
+                keyboard_positions = [top_y + i * step for i in range(max_keyboard)]
+
+            for i, keyboard_note in enumerate(self.captured_keyboard_notes[:4]):
+                y_pos = keyboard_positions[i]
+                note_text = note_to_name(keyboard_note)
+                draw.text((4, y_pos), note_text, fill=1)
+
+        # Show phase-specific instructions
+        if not self.completion_time:
+            if self.trigger_capture_phase:
+                if not self.captured_triggers:
+                    self._draw_listen_text(draw, w, h)
+                else:
+                    # Show "SELECT to continue" if we have triggers
+                    instruction = "SELECT for keyboard"
+                    bbox = draw.textbbox((0, 0), instruction)
+                    text_w = bbox[2] - bbox[0]
+                    text_x = (w - text_w) // 2
+                    draw.text((text_x, h - 15), instruction, fill=1)
+            else:
+                # Keyboard capture phase
+                needed = len(self.captured_triggers) - len(self.captured_keyboard_notes)
+                if needed > 0:
+                    instruction = f"Play {needed} more key{'s' if needed > 1 else ''}"
+                    bbox = draw.textbbox((0, 0), instruction)
+                    text_w = bbox[2] - bbox[0]
+                    text_x = (w - text_w) // 2
+                    draw.text((text_x, h - 15), instruction, fill=1)
 
 class UtilitiesScreen(Screen):
     def __init__(self):
         self.rows = [
             ("Allow Duplicate Notes", self._toggle_duplicates),
+            ("LoNote OctDown", self._toggle_octave_down),  # MOVED HERE
             ("LED Brightness", self._cycle_led_brightness),
             ("Back", None),
         ]
@@ -621,10 +788,12 @@ class UtilitiesScreen(Screen):
         draw.text((4, 2), "Utilities", fill=1)
         
         allow_dupes = self._cfg.get("allow_duplicate_notes", False) if self._cfg else False
+        octave_down = self._cfg.get("octave_down_lowest", False) if self._cfg else False
         led_brightness = self._get_led_brightness_label()
         
         body = [
             f"Duplicates: {'On' if allow_dupes else 'Off'}",
+            f"LoNote OctDown: {'On' if octave_down else 'Off'}",  # NEW
             f"LEDs: {led_brightness}",
             "Back",
         ]
@@ -790,7 +959,12 @@ class DDTiSyncScreen(Screen):
                 self._status = "Kit0 captured!"
                 self._done = True
                 self._add_debug(f"SUCCESS: {notes}")
-                return ScreenResult(dirty=True)
+                
+                # NEW: Auto-exit after successful capture
+                # Give user a brief moment to see the success message, then exit
+                time.sleep(0.5)  # Brief pause to show success
+                self.deactivate()  # Clean up ALSA routing
+                return ScreenResult(pop=True, dirty=True)  # Auto-exit
         
         # Auto-refresh display every 0.5 seconds
         if (time.monotonic() - self._start_ts) > 0.5:
