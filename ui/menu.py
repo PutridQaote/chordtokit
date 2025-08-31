@@ -908,35 +908,21 @@ class DDTiSyncScreen(Screen):
             draw.text((4, y), "No DDTi input ✗", fill=1)
         y += 10
         
-        # Show SysEx count
+        # Show SysEx count only
         draw.text((4, y), f"SysEx: {self._sysex_count}", fill=1)
         y += 10
         
-        # Show kit0 status
-        if self._cc.ddti.have_kit0_bulk():
-            notes = self._cc.ddti.extract_kit0_notes()
-            if notes:
-                notes_str = "/".join(str(n) for n in notes)
-                draw.text((4, y), f"Kit0: {notes_str}", fill=1)
-            else:
-                draw.text((4, y), "Kit0: bulk but no notes", fill=1)
-        else:
-            draw.text((4, y), "Kit0: none", fill=1)
-        y += 10
+        # Skip the Kit0 status line entirely
+        # Skip the debug message line entirely
         
-        # Show recent debug message (last one)
-        if self._debug_messages:
-            last_msg = self._debug_messages[-1]
-            # Truncate message to fit screen width (~18 chars)
-            if len(last_msg) > 18:
-                last_msg = last_msg[:15] + "..."
-            draw.text((4, y), last_msg, fill=1)
-        
-        # Instructions
+        # Instructions - updated text
         if self._done:
-            draw.text((4, 54), "SELECT=OK", fill=1)
+            draw.text((4, 45), "Kit0 captured!", fill=1)
+            draw.text((4, 56), "Auto-exiting...", fill=1)
         else:
-            draw.text((4, 54), "Press DUMP on DDTi", fill=1)
+            draw.text((4, 35), "Waiting for DDTi", fill=1)
+            draw.text((4, 45), "SysEx Dump...", fill=1)
+            draw.text((4, 56), "(Function & Value Up)", fill=1)
 
     def on_key(self, key: int) -> ScreenResult:
         if key == BUTTON_LEFT:
@@ -979,6 +965,13 @@ class DDTiSyncScreen(Screen):
                 
                 if not before_bulk and after_bulk:
                     self._add_debug("*** Kit0 captured! ***")
+                    
+                    # NEW: Record the captured kit0 state as the initial undo point
+                    notes = self._cc.ddti.extract_kit0_notes()
+                    if notes:
+                        # Store this as the "original" state for undo
+                        self._cc.record_current_state_for_undo()
+                        self._add_debug(f"Initial undo state: {notes}")
                 
             except Exception as e:
                 self._add_debug(f"Ingest error: {e}")
@@ -992,8 +985,7 @@ class DDTiSyncScreen(Screen):
                 self._done = True
                 self._add_debug(f"SUCCESS: {notes}")
                 
-                # NEW: Auto-exit after successful capture
-                # Give user a brief moment to see the success message, then exit
+                # Auto-exit after successful capture
                 time.sleep(0.5)  # Brief pause to show success
                 self.deactivate()  # Clean up ALSA routing
                 return ScreenResult(pop=True, dirty=True)  # Auto-exit

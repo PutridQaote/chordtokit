@@ -7,7 +7,7 @@ from hw.neokey import NeoKey
 from hw.oled import Oled
 from hw.midi_io import Midi
 from hw.footswitch import Footswitch
-from ui.menu import Menu, ChordCaptureScreen, SingleNoteCaptureScreen
+from ui.menu import Menu, ChordCaptureScreen, SingleNoteCaptureScreen, HomeScreen, DDTiSyncScreen
 from features.chord_capture import ChordCapture
 
 import subprocess
@@ -63,9 +63,15 @@ def main():
                neokey=nk, alsa_router=alsa_router)
 
     # Set chord_capture reference for the home screen
-    if hasattr(menu._stack[0], '_chord_capture'):
+    if isinstance(menu._stack[0], HomeScreen):
         menu._stack[0]._chord_capture = chord_capture
 
+    # NEW: Auto-start DDTi Sync on boot
+    print("Auto-starting DDTi Sync...")
+    sync_screen = DDTiSyncScreen(chord_capture)
+    sync_screen.attach(chord_capture, cfg, alsa_router)
+    menu.push(sync_screen)
+    
     img, draw = oled.begin_frame()
     menu.render_into(draw, oled.width, oled.height)
     oled.show(img)
