@@ -41,11 +41,11 @@ class Screen:
 class ChordCaptureMenuScreen(Screen):
     def __init__(self):
         self.rows = [
-            ("4-Note Capture", self._start_4_note_capture),
-            ("Single Note Capture", self._start_single_note_capture),
+            ("Full Chord Capture", self._start_4_note_capture),
             ("Variable Trigger Capture", self._start_variable_trigger_capture),
+            ("Single Note Capture", self._start_single_note_capture),
             ("Footswitch Mode", self._toggle_footswitch_mode),
-            ("Undo Mapping", self._undo_mapping),  # NEW
+            # Removed "Undo Mapping" - moved to utilities
         ]
         self.sel = 0
         self._chord_capture = None
@@ -88,13 +88,6 @@ class ChordCaptureMenuScreen(Screen):
             return ScreenResult(push=screen, dirty=True)
         return ScreenResult(dirty=False)
 
-    def _undo_mapping(self):
-        if self._chord_capture:
-            ok = self._chord_capture.undo_last_mapping()
-            if not ok:
-                print("Menu: Undo failed or no history")
-        return ScreenResult(dirty=True)
-
     def _toggle_footswitch_mode(self):
         """Toggle footswitch mode between 'all' (4-note) and 'single' (1-note)."""
         if self._cfg:
@@ -136,9 +129,9 @@ class ChordCaptureMenuScreen(Screen):
         footswitch_mode = self._get_footswitch_mode_label()
         
         body = [
-            "4-Note Capture",
+            "Full Chord Capture",
+            "Variable Trigger Capture",
             "Single Note Capture",
-            "Variable Trigger Capture",  # NEW
             f"Footswitch: {footswitch_mode}",
         ]
         y = 14
@@ -709,7 +702,8 @@ class UtilitiesScreen(Screen):
     def __init__(self):
         self.rows = [
             ("Allow Duplicate Notes", self._toggle_duplicates),
-            ("LoNote OctDown", self._toggle_octave_down),  # MOVED HERE
+            ("LoNote OctDown", self._toggle_octave_down),
+            ("Undo Mapping", self._undo_mapping),  # MOVED HERE
             ("LED Brightness", self._cycle_led_brightness),
             ("Back", None),
         ]
@@ -730,6 +724,23 @@ class UtilitiesScreen(Screen):
             self._cfg.set("allow_duplicate_notes", new_val)
             self._cfg.save()
             self._chord_capture.set_allow_duplicates(new_val)
+
+    def _toggle_octave_down(self):
+        """Toggle octave down for lowest note."""
+        if self._chord_capture and self._cfg:
+            current = self._cfg.get("octave_down_lowest", False)
+            new_val = not current
+            self._cfg.set("octave_down_lowest", new_val)
+            self._cfg.save()
+            self._chord_capture.set_octave_down_lowest(new_val)
+
+    def _undo_mapping(self):
+        """Undo the most recent mapping change."""
+        if self._chord_capture:
+            ok = self._chord_capture.undo_last_mapping()
+            if not ok:
+                print("Utilities: Undo failed or no history")
+        return ScreenResult(dirty=True)
 
     def _cycle_led_brightness(self):
         """Cycle through LED brightness levels: 100%, 75%, 50%, 25%, Off."""
@@ -794,7 +805,10 @@ class UtilitiesScreen(Screen):
             if label == "Back":
                 return ScreenResult(pop=True)
             if action:
-                action()
+                result = action()
+                # Handle case where action returns a ScreenResult (like _undo_mapping)
+                if isinstance(result, ScreenResult):
+                    return result
                 return ScreenResult(dirty=True)
         if key == BUTTON_LEFT:
             return ScreenResult(pop=True)
@@ -810,7 +824,8 @@ class UtilitiesScreen(Screen):
         
         body = [
             f"Duplicates: {'On' if allow_dupes else 'Off'}",
-            f"LoNote OctDown: {'On' if octave_down else 'Off'}",  # NEW
+            f"LoNote OctDown: {'On' if octave_down else 'Off'}",
+            "Undo Mapping",  # NEW
             f"LEDs: {led_brightness}",
             "Back",
         ]
