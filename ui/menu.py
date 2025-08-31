@@ -910,7 +910,7 @@ class DDTiSyncScreen(Screen):
         # draw.text((4, y), f"SysEx: {self._sysex_count}", fill=1)
                 
         # One blank line after header
-        y += 10
+        y += 8
         
         # Instructions - only center the main message
         if self._done:
@@ -940,13 +940,13 @@ class DDTiSyncScreen(Screen):
             bbox2 = draw.textbbox((0, 0), text2)
             text2_w = bbox2[2] - bbox2[0]
             text2_x = (w - text2_w) // 2
-            draw.text((text2_x, y + 12), text2, fill=1)
+            draw.text((text2_x, y + 10), text2, fill=1)
             
             text3 = "(Function & Value Up)"
             bbox3 = draw.textbbox((0, 0), text3)
             text3_w = bbox3[2] - bbox3[0]
             text3_x = (w - text3_w) // 2
-            draw.text((text3_x, y + 32), text3, fill=1)
+            draw.text((text3_x, y + 26), text3, fill=1)
 
     def on_key(self, key: int) -> ScreenResult:
         if key == BUTTON_LEFT:
