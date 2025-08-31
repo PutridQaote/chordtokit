@@ -946,7 +946,7 @@ class DDTiSyncScreen(Screen):
             bbox3 = draw.textbbox((0, 0), text3)
             text3_w = bbox3[2] - bbox3[0]
             text3_x = (w - text3_w) // 2
-            draw.text((text3_x, y + 26), text3, fill=1)
+            draw.text((text3_x, y + 30), text3, fill=1)
 
     def on_key(self, key: int) -> ScreenResult:
         if key == BUTTON_LEFT:
