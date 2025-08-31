@@ -218,3 +218,39 @@ class DDTi:
         self._kit0.notes = notes
         print(f"DDTi: Patched kit0 {old_note}->{new_note} at indices {matches}; new notes {notes}")
         return Message('sysex', data=bytes(buf))
+
+    def get_kit0_bulk_frame(self) -> Optional[bytes]:
+        """Return current cached kit0 bulk frame bytes (76) or None."""
+        if not self.have_kit0_bulk():
+            return None
+        return self._kit0.bulk
+
+    def _rebuild_kit0_notes_from_bulk(self):
+        """Re-extract kit0 trigger notes from bulk frame (uses known offsets)."""
+        if not self.have_kit0_bulk():
+            return
+        notes = []
+        for off in self._bulk_note_offsets:
+            if off < len(self._kit0.bulk):
+                notes.append(self._kit0.bulk[off] & 0x7F)
+        self._kit0.notes = notes
+
+    def build_kit0_full_frame_message(self, bulk: bytes) -> Optional[Message]:
+        """Wrap a raw 76-byte kit0 bulk frame in a SysEx Message (no mutation)."""
+        if not bulk or len(bulk) != 76:
+            print(f"DDTi: Invalid kit0 bulk length for restore: {len(bulk) if bulk else 'None'}")
+            return None
+        return Message('sysex', data=bytes(bulk))
+
+    def restore_kit0_bulk(self, bulk: bytes) -> Optional[Message]:
+        """
+        Replace cached kit0 bulk with provided bytes and return a Message
+        suitable for sending to device (caller sends).
+        """
+        msg = self.build_kit0_full_frame_message(bulk)
+        if not msg:
+            return None
+        self._kit0.bulk = bytes(bulk)
+        self._rebuild_kit0_notes_from_bulk()
+        print(f"DDTi: Restored kit0 bulk (undo) notes={self._kit0.notes}")
+        return msg

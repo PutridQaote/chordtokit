@@ -13,7 +13,9 @@ class ChordCapture:
     When 4 distinct notes are collected, sends SysEx to DDTi via MIDI output.
     """
     
-    def __init__(self, midi_adapter, max_notes: int = 4, timeout_seconds: float = 5.0, allow_duplicates: bool = False, octave_down_lowest: bool = False):
+    def __init__(self, midi_adapter, max_notes: int = 4, timeout_seconds: float = 5.0,
+                 allow_duplicates: bool = False, octave_down_lowest: bool = False,
+                 undo_limit: int = 8):
         """
         Args:
             midi_adapter: Midi object with iter_input() and send() methods
@@ -35,6 +37,9 @@ class ChordCapture:
 
         # DDTi state tracking
         self.last_sent_chord: Optional[List[int]] = None
+        # Change history to store dict entries (type-tagged)
+        self._undo_limit = max(1, int(undo_limit))
+        self._history: List[dict] = []
 
     def set_allow_duplicates(self, allow: bool):
         """Change duplicate policy and clear bucket."""
@@ -121,22 +126,18 @@ class ChordCapture:
             
             if len(chord) == self.max_notes:
                 final_chord = self._apply_octave_down(chord) if self.octave_down_lowest else chord
-                
-                # Send SysEx using new DDTi interface
                 try:
+                    prev_state = self.ddti.get_current_state()
+                    if prev_state:
+                        self._push_history_entry({"type": "mapping", "state": prev_state[:]})
                     sysex_msg = self.ddti.build_full_sysex(final_chord)
                     self.midi.send(sysex_msg)
                     print(f"Sent full SysEx: {len(sysex_msg.data)} bytes")
-                    
-                    # The DDTi class now tracks its own state
                     self.last_sent_chord = self.ddti.get_current_state()
-                    
                 except Exception as e:
                     print(f"Error sending SysEx: {e}")
-                
-                # Clear bucket and return the original chord (for display purposes)
                 self.bucket.clear()
-                return chord  # Return original chord for display
+                return chord
             elif not self.allow_duplicates:
                 print(f"Need {self.max_notes} distinct notes; got {len(chord)}: {chord}")
                 # Keep collecting if we don't have enough unique notes
@@ -186,3 +187,73 @@ class ChordCapture:
             'last_note_age': time.monotonic() - self.last_note_time if self.bucket else 0,
             'allow_duplicates': self.allow_duplicates
         }
+
+    def _push_history_entry(self, entry: dict):
+        """Generic bounded history push (avoids consecutive duplicates)."""
+        if not entry:
+            return
+        if self._history and self._history[-1] == entry:
+            return
+        self._history.append(entry)
+        if len(self._history) > self._undo_limit:
+            self._history.pop(0)
+
+    def record_current_state_for_undo(self):
+        """Record current trigger mapping (4-note chord) for undo (mapping type)."""
+        cur = self.ddti.get_current_state()
+        if cur:
+            self._push_history_entry({"type": "mapping", "state": cur[:]})
+
+    def record_kit0_bulk_for_undo(self, bulk: bytes):
+        """Record a kit0 bulk frame snapshot for undo (taken BEFORE mutation)."""
+        if not bulk:
+            return
+        self._push_history_entry({"type": "kit0", "bulk": bytes(bulk)})
+
+    def undo_last_mapping(self) -> bool:
+        """
+        Undo the most recent change (mapping or kit0 single-note edit).
+        Returns True if something was restored & sent.
+        """
+        if not self._history:
+            print("Undo: No history to restore")
+            return False
+        entry = self._history.pop()
+        etype = entry.get("type")
+        try:
+            if etype == "mapping":
+                state = entry.get("state")
+                if not state:
+                    print("Undo: Invalid mapping entry")
+                    return False
+                msg = self.ddti.build_full_sysex(state)
+                if not msg:
+                    print("Undo: Failed to build mapping restore SysEx")
+                    return False
+                if self.midi.send(msg):
+                    self.last_sent_chord = state[:]
+                    print(f"Undo: Restored mapping {state}")
+                    return True
+                print("Undo: MIDI send failed (mapping)")
+                return False
+            elif etype == "kit0":
+                bulk = entry.get("bulk")
+                if not bulk:
+                    print("Undo: Invalid kit0 bulk entry")
+                    return False
+                # Restores internal cache AND yields a message
+                msg = self.ddti.restore_kit0_bulk(bulk)
+                if not msg:
+                    print("Undo: Could not rebuild kit0 restore message")
+                    return False
+                if self.midi.send(msg):
+                    print("Undo: Restored kit0 single-note edit")
+                    return True
+                print("Undo: MIDI send failed (kit0)")
+                return False
+            else:
+                print(f"Undo: Unknown history entry type {etype}")
+                return False
+        except Exception as e:
+            print(f"Undo: Restore failed: {e}")
+            return False

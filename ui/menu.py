@@ -43,9 +43,9 @@ class ChordCaptureMenuScreen(Screen):
         self.rows = [
             ("4-Note Capture", self._start_4_note_capture),
             ("Single Note Capture", self._start_single_note_capture),
-            ("Variable Trigger Capture", self._start_variable_trigger_capture),  # NEW
+            ("Variable Trigger Capture", self._start_variable_trigger_capture),
             ("Footswitch Mode", self._toggle_footswitch_mode),
-            # Removed LoNote OctDown - moved to utilities
+            ("Undo Mapping", self._undo_mapping),  # NEW
         ]
         self.sel = 0
         self._chord_capture = None
@@ -87,6 +87,13 @@ class ChordCaptureMenuScreen(Screen):
             screen.activate()
             return ScreenResult(push=screen, dirty=True)
         return ScreenResult(dirty=False)
+
+    def _undo_mapping(self):
+        if self._chord_capture:
+            ok = self._chord_capture.undo_last_mapping()
+            if not ok:
+                print("Menu: Undo failed or no history")
+        return ScreenResult(dirty=True)
 
     def _toggle_footswitch_mode(self):
         """Toggle footswitch mode between 'all' (4-note) and 'single' (1-note)."""
@@ -445,7 +452,7 @@ class SingleNoteCaptureScreen(BaseCaptureScreen):
         return super().update()
 
     def _send_single_note_change(self):
-        """Send SysEx patch for kit0 replacing all occurrences of trigger note."""
+        """Send SysEx patch for kit0 replacing all occurrences of trigger note (with undo)."""
         if self.captured_trigger_note is None or self.captured_keyboard_note is None:
             return
         ddti = self.chord_capture.ddti
@@ -457,10 +464,16 @@ class SingleNoteCaptureScreen(BaseCaptureScreen):
         old_note = self.captured_trigger_note
         new_note = self.captured_keyboard_note
 
+        # Capture pre-mutation bulk snapshot for undo
+        pre_bulk = ddti.get_kit0_bulk_frame()
         msg = ddti.build_kit0_single_note_patch(old_note, new_note)
         if not msg:
             print("SingleNote: Patch build failed (old note not found or no change).")
             return
+
+        # Only push undo snapshot if change actually occurred
+        if pre_bulk:
+            self.chord_capture.record_kit0_bulk_for_undo(pre_bulk)
 
         sent = self.chord_capture.midi.send(msg)
         if sent:
@@ -581,30 +594,25 @@ class VariableTriggerCaptureScreen(BaseCaptureScreen):
         if not self.captured_triggers or not self.captured_keyboard_notes:
             print("VariableTrigger: No triggers or keyboard notes to send")
             return
-        
         if len(self.captured_triggers) != len(self.captured_keyboard_notes):
-            print(f"VariableTrigger: Mismatch - {len(self.captured_triggers)} triggers, {len(self.captured_keyboard_notes)} keyboard notes")
+            print(f"VariableTrigger: Mismatch - {len(self.captured_triggers)} triggers vs {len(self.captured_keyboard_notes)} notes")
             return
-
-        if not self.chord_capture.ddti.have_kit0_bulk():
-            print("VariableTrigger: No kit0 bulk cached. Run DDTi Sync first.")
+        # Need current mapping state
+        if self.chord_capture.ddti.get_current_state() is None:
+            print("VariableTrigger: Current DDTi state unknown (send a full chord first).")
             return
-            
+        # Record state for undo
+        self.chord_capture.record_current_state_for_undo()
         try:
-            # Use the kit0 single-note patch method for each trigger/keyboard pair
-            for trigger_note, keyboard_note in zip(self.captured_triggers, self.captured_keyboard_notes):
-                msg = self.chord_capture.ddti.build_kit0_single_note_patch(trigger_note, keyboard_note)
-                if msg:
-                    sent = self.chord_capture.midi.send(msg)
-                    if sent:
-                        print(f"VariableTrigger: Updated trigger {note_to_name(trigger_note)} -> {note_to_name(keyboard_note)}")
-                    else:
-                        print(f"VariableTrigger: Failed to send update for {note_to_name(trigger_note)}")
-                else:
-                    print(f"VariableTrigger: Could not build patch for trigger {note_to_name(trigger_note)}")
-            
-            print(f"VariableTrigger: Completed updates for {len(self.captured_triggers)} triggers")
-            
+            # Build single partial SysEx covering all trigger changes
+            msg = self.chord_capture.ddti.build_trigger_change_sysex(
+                self.captured_triggers, self.captured_keyboard_notes
+            )
+            ok = self.chord_capture.midi.send(msg)
+            if ok:
+                print(f"VariableTrigger: Sent partial update for {len(self.captured_triggers)} triggers")
+            else:
+                print("VariableTrigger: MIDI send failed")
         except Exception as e:
             print(f"VariableTrigger: SysEx error: {e}")
 

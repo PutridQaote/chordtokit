@@ -29,10 +29,12 @@ DEFAULTS: Dict[str, Any] = {
     # Spiral animation settings for each capture mode
     "spiral_turns_4_note": 20,    # Default turns for 4-note capture
     "spiral_turns_single": 16,     # Default turns for single-note capture
-    "spiral_turns_variable": 33,  # NEW: Default for variable trigger mode
+    "spiral_turns_variable": 24,  # NEW: Default for variable trigger mode
 
     # Footswitch (so you can flip NO/NC without editing code)
     "footswitch_active_low": True,
+
+    "undo_history_limit": 20  # max number of prior mappings to keep
 }
 
 class Config:
