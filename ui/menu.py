@@ -388,45 +388,57 @@ class SingleNoteCaptureScreen(BaseCaptureScreen):
     def activate(self):
         """Start single note capture mode (no extra port, no routing changes)."""
         super().activate()
+        # Reset state
         self.captured_trigger_note = None
         self.captured_keyboard_note = None
         self.waiting_for_trigger = True
-        print("SingleNote: Activated (using shared DDTi + dedicated Midi ddti input)")
+        self._activation_guard_until = time.monotonic() + 0.04  # 40ms ignore window
+        # Drain any stale MIDI so we start clean
+        drained = self.chord_capture.midi.drain_all_inputs()
+        print(f"SingleNote: Activated (drained {drained} stale msgs)")
+        print("SingleNote: Using shared DDTi + dedicated Midi ddti input")
 
     def deactivate(self):
         """Stop single note capture mode."""
+        # Drain again so we don't leave residuals for the next mode
+        drained = self.chord_capture.midi.drain_all_inputs()
+        print(f"SingleNote: Deactivated (drained {drained} msgs on exit)")
         super().deactivate()
-        print("SingleNote: Deactivated")
 
     def update(self) -> ScreenResult:
         if not self.active:
             return ScreenResult(dirty=False)
 
+        now = time.monotonic()
         midi = self.chord_capture.midi
         ddti = self.chord_capture.ddti
 
-        # Ingest any DDTi frames + capture trigger hits (channel 10 note_on)
+        # Ingest / capture only after guard window
+        capture_enabled = now >= getattr(self, "_activation_guard_until", 0)
+
         for msg in midi.iter_ddti_all():
             if msg.type == 'sysex':
                 try:
                     ddti.ingest_sysex_frame(bytes(msg.data))
                 except Exception as e:
                     print(f"SingleNote: Sysex ingest error: {e}")
-            elif (msg.type == 'note_on' and msg.velocity > 0
-                  and self.captured_keyboard_note is None):
-                # Treat every pad hit as (re)selecting trigger until keyboard note chosen
+            elif (capture_enabled and
+                  msg.type == 'note_on' and msg.velocity > 0 and
+                  self.captured_keyboard_note is None):
                 self.captured_trigger_note = msg.note
                 self.waiting_for_trigger = False
                 print(f"SingleNote: Selected trigger note {msg.note}")
 
-        # If we have trigger but not keyboard note, read keyboard input
-        if (self.captured_trigger_note is not None and
+        if (capture_enabled and
+            self.captured_trigger_note is not None and
             self.captured_keyboard_note is None):
-            for msg in self.chord_capture.midi.iter_input():
+            for msg in midi.iter_input():
                 if msg.type == 'note_on' and getattr(msg, 'velocity', 0) > 0:
                     self.captured_keyboard_note = msg.note
                     print(f"SingleNote: Captured keyboard note {msg.note}")
                     self._send_single_note_change()
+                    # Drain immediately after sending so no cascade into next screen
+                    midi.drain_all_inputs()
                     self.completion_time = time.monotonic()
                     break
 
@@ -516,55 +528,52 @@ class VariableTriggerCaptureScreen(BaseCaptureScreen):
         self.captured_triggers.clear()
         self.captured_keyboard_notes.clear()
         self.trigger_capture_phase = True
-        print("VariableTrigger: Activated - capture DDTi triggers first, then keyboard notes")
+        self._activation_guard_until = time.monotonic() + 0.04
+        drained = self.chord_capture.midi.drain_all_inputs()
+        print(f"VariableTrigger: Activated (drained {drained} stale msgs)")
 
     def deactivate(self):
-        """Stop variable trigger capture mode."""
+        drained = self.chord_capture.midi.drain_all_inputs()
+        print(f"VariableTrigger: Deactivated (drained {drained} msgs on exit)")
         super().deactivate()
-        print("VariableTrigger: Deactivated")
 
     def update(self) -> ScreenResult:
         if not self.active:
             return ScreenResult(dirty=False)
-
+        capture_enabled = time.monotonic() >= getattr(self, "_activation_guard_until", 0)
         midi = self.chord_capture.midi
         ddti = self.chord_capture.ddti
-
         if self.trigger_capture_phase:
-            # PHASE 1: Capture DDTi trigger hits
             for msg in midi.iter_ddti_all():
                 if msg.type == 'sysex':
                     try:
                         ddti.ingest_sysex_frame(bytes(msg.data))
                     except Exception as e:
                         print(f"VariableTrigger: SysEx ingest error: {e}")
-                elif (msg.type == 'note_on' and msg.velocity >= self._min_vel):
+                elif (capture_enabled and msg.type == 'note_on' and msg.velocity >= self._min_vel):
                     now = time.monotonic()
                     if now - self._last_ddti_hit_ts >= self._debounce_s:
                         self._last_ddti_hit_ts = now
-                        # Add trigger if not already captured (avoid duplicates)
                         if msg.note not in self.captured_triggers:
                             self.captured_triggers.append(msg.note)
                             print(f"VariableTrigger: Added trigger {note_to_name(msg.note)} ({msg.note})")
-                            if len(self.captured_triggers) >= 4:  # Max 4 triggers
-                                print(f"VariableTrigger: Max triggers reached - advance to keyboard phase")
+                            if len(self.captured_triggers) >= 4:
+                                print("VariableTrigger: Max triggers reached - advance to keyboard phase")
                                 self.trigger_capture_phase = False
         else:
-            # PHASE 2: Capture keyboard notes (same count as triggers)
-            needed_keyboard_notes = len(self.captured_triggers) - len(self.captured_keyboard_notes)
-            if needed_keyboard_notes > 0:
-                for msg in midi.iter_input():
-                    if msg.type == 'note_on' and msg.velocity > 0:
-                        self.captured_keyboard_notes.append(msg.note)
-                        print(f"VariableTrigger: Added keyboard note {note_to_name(msg.note)} ({msg.note})")
-                        
-                        # Check if we have all needed keyboard notes
-                        if len(self.captured_keyboard_notes) >= len(self.captured_triggers):
-                            print(f"VariableTrigger: All notes captured - sending SysEx")
-                            self._send_variable_trigger_change()
-                            self.completion_time = time.monotonic()
-                            break
-
+            if capture_enabled:
+                needed_keyboard_notes = len(self.captured_triggers) - len(self.captured_keyboard_notes)
+                if needed_keyboard_notes > 0:
+                    for msg in midi.iter_input():
+                        if msg.type == 'note_on' and msg.velocity > 0:
+                            self.captured_keyboard_notes.append(msg.note)
+                            print(f"VariableTrigger: Added keyboard note {note_to_name(msg.note)} ({msg.note})")
+                            if len(self.captured_keyboard_notes) >= len(self.captured_triggers):
+                                print("VariableTrigger: All notes captured - sending SysEx")
+                                self._send_variable_trigger_change()
+                                midi.drain_all_inputs()
+                                self.completion_time = time.monotonic()
+                                break
         return super().update()
 
     def _send_variable_trigger_change(self):

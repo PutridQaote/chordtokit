@@ -219,3 +219,28 @@ class Midi:
             return getattr(self._ddti_in_port, "name", None)
         except Exception:
             return None
+
+    def _drain_port(self, port, label: str):
+        """Internal: drain a mido input port safely."""
+        if not port:
+            return 0
+        cnt = 0
+        try:
+            for _ in range(3):  # a few passes in case new arrive while draining
+                pending = list(port.iter_pending())
+                if not pending:
+                    break
+                cnt += len(pending)
+            if cnt:
+                print(f"Midi: Drained {cnt} messages from {label}")
+        except Exception as e:
+            print(f"Midi: Drain error ({label}): {e}")
+        return cnt
+
+    def drain_all_inputs(self):
+        """Drain keyboard + DDTi input queues."""
+        total = 0
+        total += self._drain_port(self._in_port, "keyboard in")
+        if self._ddti_in_port is not self._in_port:
+            total += self._drain_port(self._ddti_in_port, "ddti in")
+        return total
