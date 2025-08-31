@@ -902,14 +902,12 @@ class DDTiSyncScreen(Screen):
         
         # Show DDTi input connection status
         ddti_port = self._cc.midi.get_ddti_in_port_name()
-        if ddti_port:
-            draw.text((4, y), "DDTi port open ✓", fill=1)
-        else:
+        if not ddti_port:
             draw.text((4, y), "No DDTi input ✗", fill=1)
         y += 10
         
         # Show SysEx count only
-        draw.text((4, y), f"SysEx: {self._sysex_count}", fill=1)
+        # draw.text((4, y), f"SysEx: {self._sysex_count}", fill=1)
         y += 10
         
         # Skip the Kit0 status line entirely
