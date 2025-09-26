@@ -110,7 +110,6 @@ class MidiSettingsScreen(Screen):
             f"Chord Out: {cur_out if cur_out else '-'}",
             f"KB Thru:   {'On' if kb_thru else 'Off'}",
             f"DDTi Thru: {'On' if ddti_thru else 'Off'}",
-            "Back",
         ]
         y = 14
         for i, line in enumerate(body):
@@ -210,7 +209,6 @@ class UtilitiesScreen(Screen):
             f"Duplicates: {'On' if allow_dupes else 'Off'}",
             "Undo Mapping",
             f"LEDs: {led_brightness}",
-            "Back",
         ]
         y = 14
         for i, line in enumerate(body):
