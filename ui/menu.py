@@ -42,10 +42,9 @@ class ChordCaptureMenuScreen(Screen):
     def __init__(self):
         self.rows = [
             ("Full Chord Capture", self._start_4_note_capture),
-            ("Variable Trigger Capture", self._start_variable_trigger_capture),
+            ("Learn Mapping", self._start_learn_mapping),
             ("Single Note Capture", self._start_single_note_capture),
             ("Footswitch Mode", self._toggle_footswitch_mode),
-            # Removed "Undo Mapping" - moved to utilities
         ]
         self.sel = 0
         self._chord_capture = None
@@ -69,19 +68,28 @@ class ChordCaptureMenuScreen(Screen):
     def _start_single_note_capture(self):
         """Start the new single-note capture mode."""
         if self._chord_capture:
-            print("Menu: Starting single-note capture")
-            screen = SingleNoteCaptureScreen(self._chord_capture, config=self._cfg)  # Pass config
-            if self._alsa_router:
-                screen.set_alsa_router(self._alsa_router)
-            screen.activate()
-            return ScreenResult(push=screen, dirty=True)
+            # Check if we have a learned mapping
+            if not self._chord_capture.has_learned_mapping():
+                print("Menu: No learned mapping, starting Learn Mapping first")
+                screen = LearnMappingScreen(self._chord_capture, config=self._cfg, auto_continue_to_single=True)
+                if self._alsa_router:
+                    screen.set_alsa_router(self._alsa_router)
+                screen.activate()
+                return ScreenResult(push=screen, dirty=True)
+            else:
+                print("Menu: Starting single-note capture")
+                screen = SingleNoteCaptureScreen(self._chord_capture, config=self._cfg)  # Pass config
+                if self._alsa_router:
+                    screen.set_alsa_router(self._alsa_router)
+                screen.activate()
+                return ScreenResult(push=screen, dirty=True)
         return ScreenResult(dirty=False)
     
-    def _start_variable_trigger_capture(self):
-        """Start the new variable-trigger capture mode."""
+    def _start_learn_mapping(self):
+        """Start the learn mapping mode."""
         if self._chord_capture:
-            print("Menu: Starting variable-trigger capture")
-            screen = VariableTriggerCaptureScreen(self._chord_capture, config=self._cfg)
+            print("Menu: Starting learn mapping")
+            screen = LearnMappingScreen(self._chord_capture, config=self._cfg)
             if self._alsa_router:
                 screen.set_alsa_router(self._alsa_router)
             screen.activate()
@@ -130,7 +138,7 @@ class ChordCaptureMenuScreen(Screen):
         
         body = [
             "Full Chord Capture",
-            "Variable Trigger Capture",
+            "Learn Mapping",
             "Single Note Capture",
             f"Footswitch: {footswitch_mode}",
         ]
@@ -273,6 +281,132 @@ class BaseCaptureScreen(Screen):
             
         return ScreenResult(dirty=True)
 
+class LearnMappingScreen(BaseCaptureScreen):
+    """Screen for learning the 4 trigger mappings in order: KICK, SNARE, HI-HAT, RIDE."""
+    
+    def __init__(self, chord_capture, config=None, auto_continue_to_single=False):
+        super().__init__(chord_capture, turns=10, 
+                        config_key="spiral_turns_learn", config=config)
+        
+        self.trigger_names = ["KICK", "SNARE", "HI-HAT", "RIDE"]
+        self.current_trigger = 0  # Index into trigger_names
+        self.learned_notes = []   # Notes we've captured
+        self.auto_continue_to_single = auto_continue_to_single  # Auto-launch single capture when done
+        
+        # ALSA router reference
+        self.alsa_router = None
+        self._last_hit_ts = 0.0
+        self._debounce_s = 0.12
+        self._min_vel = 8
+        
+    def set_alsa_router(self, router):
+        """Set the ALSA router reference."""
+        self.alsa_router = router
+        
+    def activate(self):
+        """Start learn mapping mode."""
+        super().activate()
+        self.current_trigger = 0
+        self.learned_notes = []
+        self._activation_guard_until = time.monotonic() + 0.04  # 40ms ignore window
+        
+        # Drain any stale MIDI
+        drained = self.chord_capture.midi.drain_all_inputs()
+        print(f"LearnMapping: Activated (drained {drained} stale msgs)")
+        
+    def deactivate(self):
+        """Stop learn mapping mode."""
+        drained = self.chord_capture.midi.drain_all_inputs()
+        print(f"LearnMapping: Deactivated (drained {drained} msgs on exit)")
+        super().deactivate()
+        
+    def update(self) -> ScreenResult:
+        if not self.active:
+            return ScreenResult(dirty=False)
+            
+        now = time.monotonic()
+        midi = self.chord_capture.midi
+        
+        # Only capture after guard window
+        capture_enabled = now >= getattr(self, "_activation_guard_until", 0)
+        
+        if capture_enabled and self.current_trigger < len(self.trigger_names):
+            # Listen for DDTi trigger hits
+            for msg in midi.iter_ddti_all():
+                if (msg.type == 'note_on' and msg.velocity >= self._min_vel):
+                    if now - self._last_hit_ts >= self._debounce_s:
+                        self._last_hit_ts = now
+                        
+                        # Check if this note is already learned
+                        if msg.note not in self.learned_notes:
+                            trigger_name = self.trigger_names[self.current_trigger]
+                            self.learned_notes.append(msg.note)
+                            print(f"LearnMapping: {trigger_name} = {note_to_name(msg.note)} ({msg.note})")
+                            
+                            self.current_trigger += 1
+                            
+                            # Check if we're done learning all 4
+                            if self.current_trigger >= len(self.trigger_names):
+                                print(f"LearnMapping: Complete! Learned: {self.learned_notes}")
+                                self._complete_learning()
+                                return ScreenResult(dirty=True)
+                                
+                            return ScreenResult(dirty=True)
+                        else:
+                            print(f"LearnMapping: Note {msg.note} already learned, skipping")
+        
+        # Check for completion and auto-continue
+        if self.completion_time and (time.monotonic() - self.completion_time) >= 1.0:
+            self.deactivate()
+            
+            if self.auto_continue_to_single:
+                # Auto-launch single note capture
+                screen = SingleNoteCaptureScreen(self.chord_capture, config=self.config)
+                if self.alsa_router:
+                    screen.set_alsa_router(self.alsa_router)
+                screen.activate()
+                return ScreenResult(push=screen, pop=True, dirty=True)
+            else:
+                return ScreenResult(pop=True, dirty=True)
+                
+        return ScreenResult(dirty=True) if self.active else ScreenResult(dirty=False)
+        
+    def render(self, draw: ImageDraw.ImageDraw, w: int, h: int) -> None:
+        if not self._render_base_frame(draw, w, h):
+            return
+            
+        # Show which trigger we're learning
+        if self.current_trigger < len(self.trigger_names):
+            trigger_name = self.trigger_names[self.current_trigger]
+            step_text = f"{trigger_name} ({self.current_trigger + 1})"
+            
+            # Center the trigger name at top
+            bbox = draw.textbbox((0, 0), step_text)
+            text_w = bbox[2] - bbox[0]
+            text_x = (w - text_w) // 2
+            draw.text((text_x, 4), step_text, fill=1)
+            
+            # Show instruction
+            instruction = "Hit the trigger"
+            bbox = draw.textbbox((0, 0), instruction)
+            text_w = bbox[2] - bbox[0]
+            text_x = (w - text_w) // 2
+            draw.text((text_x, h - 15), instruction, fill=1)
+        else:
+            # Learning complete
+            complete_text = "Mapping Complete!"
+            bbox = draw.textbbox((0, 0), complete_text)
+            text_w = bbox[2] - bbox[0]
+            text_x = (w - text_w) // 2
+            draw.text((text_x, h // 2), complete_text, fill=1)
+            
+        # Show learned notes on the left side
+        for i, note in enumerate(self.learned_notes):
+            if i < len(self.trigger_names):
+                trigger_name = self.trigger_names[i]
+                note_text = f"{trigger_name[:4]}: {note_to_name(note)}"
+                draw.text((4, 16 + i * 10), note_text, fill=1)
+
 class ChordCaptureScreen(BaseCaptureScreen):
     def __init__(self, chord_capture, config=None):
         # Call parent with config settings for 4-note mode
@@ -386,7 +520,7 @@ class SingleNoteCaptureScreen(BaseCaptureScreen):
         self.alsa_router = router
         
     def activate(self):
-        """Start single note capture mode (no extra port, no routing changes)."""
+        """Start single note capture mode."""
         super().activate()
         # Reset state
         self.captured_trigger_note = None
@@ -396,7 +530,6 @@ class SingleNoteCaptureScreen(BaseCaptureScreen):
         # Drain any stale MIDI so we start clean
         drained = self.chord_capture.midi.drain_all_inputs()
         print(f"SingleNote: Activated (drained {drained} stale msgs)")
-        print("SingleNote: Using shared DDTi + dedicated Midi ddti input")
 
     def deactivate(self):
         """Stop single note capture mode."""
@@ -411,31 +544,34 @@ class SingleNoteCaptureScreen(BaseCaptureScreen):
 
         now = time.monotonic()
         midi = self.chord_capture.midi
-        ddti = self.chord_capture.ddti
 
-        # Ingest / capture only after guard window
+        # Only capture after guard window
         capture_enabled = now >= getattr(self, "_activation_guard_until", 0)
 
+        # Listen for DDTi trigger hits to select which note to change
         for msg in midi.iter_ddti_all():
-            if msg.type == 'sysex':
-                try:
-                    ddti.ingest_sysex_frame(bytes(msg.data))
-                except Exception as e:
-                    print(f"SingleNote: Sysex ingest error: {e}")
-            elif (capture_enabled and
-                  msg.type == 'note_on' and msg.velocity > 0 and
-                  self.captured_keyboard_note is None):
-                self.captured_trigger_note = msg.note
-                self.waiting_for_trigger = False
-                print(f"SingleNote: Selected trigger note {msg.note}")
+            if (capture_enabled and
+                msg.type == 'note_on' and msg.velocity > 0 and
+                self.captured_keyboard_note is None):
+                
+                # Check if this trigger note is in our learned mapping
+                learned_mapping = self.chord_capture.get_learned_mapping()
+                if learned_mapping and msg.note in learned_mapping:
+                    self.captured_trigger_note = msg.note
+                    self.waiting_for_trigger = False
+                    print(f"SingleNote: Selected trigger note {note_to_name(msg.note)} ({msg.note})")
+                else:
+                    print(f"SingleNote: Note {msg.note} not in learned mapping, ignoring")
 
+        # Listen for keyboard notes to replace the selected trigger
         if (capture_enabled and
             self.captured_trigger_note is not None and
             self.captured_keyboard_note is None):
+            
             for msg in midi.iter_input():
                 if msg.type == 'note_on' and getattr(msg, 'velocity', 0) > 0:
                     self.captured_keyboard_note = msg.note
-                    print(f"SingleNote: Captured keyboard note {msg.note}")
+                    print(f"SingleNote: Captured keyboard note {note_to_name(msg.note)} ({msg.note})")
                     self._send_single_note_change()
                     # Drain immediately after sending so no cascade into next screen
                     midi.drain_all_inputs()
@@ -445,34 +581,41 @@ class SingleNoteCaptureScreen(BaseCaptureScreen):
         return super().update()
 
     def _send_single_note_change(self):
-        """Send SysEx patch for kit0 replacing all occurrences of trigger note (with undo)."""
+        """Send SysEx to change one note in the learned mapping."""
         if self.captured_trigger_note is None or self.captured_keyboard_note is None:
             return
-        ddti = self.chord_capture.ddti
-
-        if not ddti.have_kit0_bulk():
-            print("SingleNote: No kit0 bulk cached. Run DDTi Sync first.")
-            return
-
+            
         old_note = self.captured_trigger_note
         new_note = self.captured_keyboard_note
-
-        # Capture pre-mutation bulk snapshot for undo
-        pre_bulk = ddti.get_kit0_bulk_frame()
-        msg = ddti.build_kit0_single_note_patch(old_note, new_note)
-        if not msg:
-            print("SingleNote: Patch build failed (old note not found or no change).")
+        
+        # Get current learned mapping
+        learned_mapping = self.chord_capture.get_learned_mapping()
+        if not learned_mapping:
+            print("SingleNote: No learned mapping available")
             return
-
-        # Only push undo snapshot if change actually occurred
-        if pre_bulk:
-            self.chord_capture.record_kit0_bulk_for_undo(pre_bulk)
-
-        sent = self.chord_capture.midi.send(msg)
-        if sent:
-            print(f"SingleNote: Sent kit0 single-note patch ({len(msg.data)} bytes)")
-        else:
-            print("SingleNote: MIDI send failed")
+            
+        # Find the index of the old note and replace it
+        try:
+            index = learned_mapping.index(old_note)
+            new_mapping = learned_mapping[:]
+            new_mapping[index] = new_note
+            
+            # Record current state for undo
+            self.chord_capture.record_current_state_for_undo()
+            
+            # Send the updated mapping
+            sysex_msg = self.chord_capture.ddti.build_full_sysex(new_mapping)
+            sent = self.chord_capture.midi.send(sysex_msg)
+            
+            if sent:
+                print(f"SingleNote: Changed {note_to_name(old_note)} -> {note_to_name(new_note)}")
+                # Update the learned mapping
+                self.chord_capture.set_learned_mapping(new_mapping)
+            else:
+                print("SingleNote: MIDI send failed")
+                
+        except ValueError:
+            print(f"SingleNote: Note {old_note} not found in learned mapping")
 
     def on_key(self, key: int) -> ScreenResult:
         if key == BUTTON_LEFT:
@@ -491,13 +634,11 @@ class SingleNoteCaptureScreen(BaseCaptureScreen):
     def render(self, draw: ImageDraw.ImageDraw, w: int, h: int) -> None:
         if not self._render_base_frame(draw, w, h):
             return
-        ddti = self.chord_capture.ddti
-        if ddti.have_kit0_bulk():
-            notes = ddti.extract_kit0_notes()
-            # if notes:
-            #     draw.text((4, 4), "Kit0:" + "/".join(str(n) for n in notes), fill=1)
-        else:
-            draw.text((4, 4), "Need DDTi Sync", fill=1)
+            
+        # Check if we have a learned mapping
+        if not self.chord_capture.has_learned_mapping():
+            draw.text((4, 4), "Need Learn Mapping", fill=1)
+            return
 
         if self.captured_trigger_note is not None:
             draw.text(self.trigger_position,
@@ -508,202 +649,12 @@ class SingleNoteCaptureScreen(BaseCaptureScreen):
         if not self.completion_time:
             self._draw_listen_text(draw, w, h)
 
-class VariableTriggerCaptureScreen(BaseCaptureScreen):
-    def __init__(self, chord_capture, config=None):
-        super().__init__(chord_capture, turns=15, 
-                        config_key="spiral_turns_variable", config=config)
-        
-        # Variable-trigger state - TWO DISTINCT PHASES
-        self.captured_triggers: List[int] = []  # DDTi notes that were hit
-        self.captured_keyboard_notes: List[int] = []  # Keyboard notes to assign
-        self.trigger_capture_phase = True  # True = capturing triggers, False = capturing keyboard
-        
-        # ALSA router reference (same as SingleNoteCaptureScreen)
-        self.alsa_router = None
-        self._last_ddti_hit_ts = 0.0
-        self._debounce_s = 0.12
-        self._min_vel = 8
-
-    def set_alsa_router(self, router):
-        """Set the ALSA router reference."""
-        self.alsa_router = router
-
-    def activate(self):
-        """Start variable trigger capture mode."""
-        super().activate()
-        self.captured_triggers.clear()
-        self.captured_keyboard_notes.clear()
-        self.trigger_capture_phase = True
-        self._activation_guard_until = time.monotonic() + 0.04
-        drained = self.chord_capture.midi.drain_all_inputs()
-        print(f"VariableTrigger: Activated (drained {drained} stale msgs)")
-
-    def deactivate(self):
-        drained = self.chord_capture.midi.drain_all_inputs()
-        print(f"VariableTrigger: Deactivated (drained {drained} msgs on exit)")
-        super().deactivate()
-
-    def update(self) -> ScreenResult:
-        if not self.active:
-            return ScreenResult(dirty=False)
-        capture_enabled = time.monotonic() >= getattr(self, "_activation_guard_until", 0)
-        midi = self.chord_capture.midi
-        ddti = self.chord_capture.ddti
-        if self.trigger_capture_phase:
-            for msg in midi.iter_ddti_all():
-                if msg.type == 'sysex':
-                    try:
-                        ddti.ingest_sysex_frame(bytes(msg.data))
-                    except Exception as e:
-                        print(f"VariableTrigger: SysEx ingest error: {e}")
-                elif (capture_enabled and msg.type == 'note_on' and msg.velocity >= self._min_vel):
-                    now = time.monotonic()
-                    if now - self._last_ddti_hit_ts >= self._debounce_s:
-                        self._last_ddti_hit_ts = now
-                        if msg.note not in self.captured_triggers:
-                            self.captured_triggers.append(msg.note)
-                            print(f"VariableTrigger: Added trigger {note_to_name(msg.note)} ({msg.note})")
-                            if len(self.captured_triggers) >= 4:
-                                print("VariableTrigger: Max triggers reached - advance to keyboard phase")
-                                self.trigger_capture_phase = False
-        else:
-            if capture_enabled:
-                needed_keyboard_notes = len(self.captured_triggers) - len(self.captured_keyboard_notes)
-                if needed_keyboard_notes > 0:
-                    for msg in midi.iter_input():
-                        if msg.type == 'note_on' and msg.velocity > 0:
-                            self.captured_keyboard_notes.append(msg.note)
-                            print(f"VariableTrigger: Added keyboard note {note_to_name(msg.note)} ({msg.note})")
-                            if len(self.captured_keyboard_notes) >= len(self.captured_triggers):
-                                print("VariableTrigger: All notes captured - sending SysEx")
-                                self._send_variable_trigger_change()
-                                midi.drain_all_inputs()
-                                self.completion_time = time.monotonic()
-                                break
-        return super().update()
-
-    def _send_variable_trigger_change(self):
-        """Send SysEx for variable number of triggers."""
-        if not self.captured_triggers or not self.captured_keyboard_notes:
-            print("VariableTrigger: No triggers or keyboard notes to send")
-            return
-        if len(self.captured_triggers) != len(self.captured_keyboard_notes):
-            print(f"VariableTrigger: Mismatch - {len(self.captured_triggers)} triggers vs {len(self.captured_keyboard_notes)} notes")
-            return
-        # Need current mapping state
-        if self.chord_capture.ddti.get_current_state() is None:
-            print("VariableTrigger: Current DDTi state unknown (send a full chord first).")
-            return
-        # Record state for undo
-        self.chord_capture.record_current_state_for_undo()
-        try:
-            # Build single partial SysEx covering all trigger changes
-            msg = self.chord_capture.ddti.build_trigger_change_sysex(
-                self.captured_triggers, self.captured_keyboard_notes
-            )
-            ok = self.chord_capture.midi.send(msg)
-            if ok:
-                print(f"VariableTrigger: Sent partial update for {len(self.captured_triggers)} triggers")
-            else:
-                print("VariableTrigger: MIDI send failed")
-        except Exception as e:
-            print(f"VariableTrigger: SysEx error: {e}")
-
-    def on_key(self, key: int) -> ScreenResult:
-        if key == BUTTON_LEFT:
-            self.deactivate()
-            return ScreenResult(pop=True)
-        elif key == BUTTON_UP:
-            self.turns = min(50, self.turns + 1)
-            self._save_turns_to_config()
-            return ScreenResult(dirty=True)
-        elif key == BUTTON_DOWN:
-            self.turns = max(1, self.turns - 1)
-            self._save_turns_to_config()
-            return ScreenResult(dirty=True)
-        elif key == BUTTON_SELECT and self.trigger_capture_phase and self.captured_triggers:
-            # Allow manual advance to keyboard phase
-            print("VariableTrigger: Manual advance to keyboard phase")
-            self.trigger_capture_phase = False
-            return ScreenResult(dirty=True)
-        return ScreenResult(dirty=False)
-
-    def render(self, draw: ImageDraw.ImageDraw, w: int, h: int) -> None:
-        if not self._render_base_frame(draw, w, h):
-            return
-
-        ddti = self.chord_capture.ddti
-        if not ddti.have_kit0_bulk():
-            draw.text((4, 4), "Need DDTi Sync", fill=1)
-
-        # Calculate vertical positions for up to 4 notes
-        # Screen height is ~64, with border we have ~60 usable pixels
-        # Top margin: 10, bottom margin: 10, leaves 44 pixels for notes
-        available_height = h - 20  # 10px top + 10px bottom margins
-        top_y = 10
-
-        # Display captured DDTi triggers on the RIGHT side
-        if self.captured_triggers:
-            max_triggers = min(len(self.captured_triggers), 4)  # Max 4 triggers
-            if max_triggers == 1:
-                trigger_positions = [top_y + available_height // 2]  # Center
-            else:
-                # Distribute evenly from top to bottom
-                step = available_height // (max_triggers - 1) if max_triggers > 1 else 0
-                trigger_positions = [top_y + i * step for i in range(max_triggers)]
-
-            for i, trigger_note in enumerate(self.captured_triggers[:4]):
-                y_pos = trigger_positions[i]
-                note_text = note_to_name(trigger_note)
-                # Right-aligned: screen width (128) - text width - margin
-                bbox = draw.textbbox((0, 0), note_text)
-                text_w = bbox[2] - bbox[0]
-                x_pos = w - text_w - 4
-                draw.text((x_pos, y_pos), note_text, fill=1)
-
-        # Display captured keyboard notes on the LEFT side
-        if self.captured_keyboard_notes:
-            max_keyboard = min(len(self.captured_keyboard_notes), 4)  # Max 4 notes
-            if max_keyboard == 1:
-                keyboard_positions = [top_y + available_height // 2]  # Center
-            else:
-                # Distribute evenly from top to bottom
-                step = available_height // (max_keyboard - 1) if max_keyboard > 1 else 0
-                keyboard_positions = [top_y + i * step for i in range(max_keyboard)]
-
-            for i, keyboard_note in enumerate(self.captured_keyboard_notes[:4]):
-                y_pos = keyboard_positions[i]
-                note_text = note_to_name(keyboard_note)
-                draw.text((4, y_pos), note_text, fill=1)
-
-        # Show phase-specific instructions
-        if not self.completion_time:
-            if self.trigger_capture_phase:
-                if not self.captured_triggers:
-                    self._draw_listen_text(draw, w, h)
-                else:
-                    # Show "SELECT to continue" if we have triggers
-                    instruction = "SELECT for keyboard"
-                    bbox = draw.textbbox((0, 0), instruction)
-                    text_w = bbox[2] - bbox[0]
-                    text_x = (w - text_w) // 2
-                    draw.text((text_x, h - 15), instruction, fill=1)
-            else:
-                # Keyboard capture phase
-                needed = len(self.captured_triggers) - len(self.captured_keyboard_notes)
-                if needed > 0:
-                    instruction = f"Play {needed} more key{'s' if needed > 1 else ''}"
-                    bbox = draw.textbbox((0, 0), instruction)
-                    text_w = bbox[2] - bbox[0]
-                    text_x = (w - text_w) // 2
-                    draw.text((text_x, h - 15), instruction, fill=1)
-
 class UtilitiesScreen(Screen):
     def __init__(self):
         self.rows = [
             ("Allow Duplicate Notes", self._toggle_duplicates),
             ("LoNote OctDown", self._toggle_octave_down),
-            ("Undo Mapping", self._undo_mapping),  # MOVED HERE
+            ("Undo Mapping", self._undo_mapping),
             ("LED Brightness", self._cycle_led_brightness),
             ("Back", None),
         ]
@@ -744,54 +695,32 @@ class UtilitiesScreen(Screen):
 
     def _cycle_led_brightness(self):
         """Cycle through LED brightness levels: 100%, 75%, 50%, 25%, Off."""
-        if not self._neokey or not self._cfg:
-            return
+        if self._cfg and self._neokey:
+            current = self._cfg.get("led_backlight_brightness", 1.0)
+            levels = [1.0, 0.75, 0.5, 0.25, 0.0]
+            try:
+                current_index = levels.index(current)
+                new_index = (current_index + 1) % len(levels)
+            except ValueError:
+                new_index = 0  # Default to 100% if current value not in list
             
-        # Define brightness levels: Off, 25%, 50%, 75%, 100%
-        brightness_levels = [0.0, 0.25, 0.5, 0.75, 1.0]
-        brightness_labels = ["Off", "25%", "50%", "75%", "100%"]
-        
-        # Get current brightness
-        current_brightness = self._cfg.get("led_backlight_brightness", 1.0)
-        
-        # Find current index (with tolerance for floating point comparison)
-        current_index = 0
-        for i, level in enumerate(brightness_levels):
-            if abs(current_brightness - level) < 0.01:
-                current_index = i
-                break
-        
-        # Move to next level (cycle back to 0 after last)
-        next_index = (current_index + 1) % len(brightness_levels)
-        new_brightness = brightness_levels[next_index]
-        
-        # Update config
-        self._cfg.set("led_backlight_brightness", new_brightness)
-        self._cfg.set("led_backlights_on", new_brightness > 0.0)  # Auto-disable if brightness is 0
-        self._cfg.save()
-        
-        # Update hardware
-        self._neokey.set_backlight_brightness(new_brightness)
-        self._neokey.set_backlight_enabled(new_brightness > 0.0)
+            new_brightness = levels[new_index]
+            self._cfg.set("led_backlight_brightness", new_brightness)
+            self._cfg.save()
+            
+            # Update NeoKey brightness immediately
+            self._neokey.set_brightness(new_brightness)
+            
+            print(f"LED brightness set to {int(new_brightness * 100)}%")
 
     def _get_led_brightness_label(self) -> str:
         """Get the current LED brightness as a label."""
         if not self._cfg:
             return "100%"
-            
         brightness = self._cfg.get("led_backlight_brightness", 1.0)
-        
-        # Map brightness to labels
-        if brightness <= 0.0:
+        if brightness == 0.0:
             return "Off"
-        elif brightness <= 0.25:
-            return "25%"
-        elif brightness <= 0.5:
-            return "50%"
-        elif brightness <= 0.75:
-            return "75%"
-        else:
-            return "100%"
+        return f"{int(brightness * 100)}%"
 
     def on_key(self, key: int) -> ScreenResult:
         if key == BUTTON_UP:
@@ -802,12 +731,9 @@ class UtilitiesScreen(Screen):
             return ScreenResult(dirty=True)
         if key == BUTTON_SELECT:
             label, action = self.rows[self.sel]
-            if label == "Back":
-                return ScreenResult(pop=True)
             if action:
                 result = action()
-                # Handle case where action returns a ScreenResult (like _undo_mapping)
-                if isinstance(result, ScreenResult):
+                if result:
                     return result
                 return ScreenResult(dirty=True)
         if key == BUTTON_LEFT:
@@ -825,7 +751,7 @@ class UtilitiesScreen(Screen):
         body = [
             f"Duplicates: {'On' if allow_dupes else 'Off'}",
             f"LoNote OctDown: {'On' if octave_down else 'Off'}",
-            "Undo Mapping",  # NEW
+            "Undo Mapping",
             f"LEDs: {led_brightness}",
             "Back",
         ]
@@ -835,10 +761,171 @@ class UtilitiesScreen(Screen):
             draw.text((4, y), prefix + line, fill=1)
             y += 12
 
+class ShutdownConfirmScreen(Screen):
+    def __init__(self, neokey=None):
+        self.neokey = neokey
+        self.sel = 0  # 0 = Cancel, 1 = Shutdown
+        
+    def on_key(self, key: int) -> ScreenResult:
+        if key == BUTTON_LEFT:  # Cancel
+            return ScreenResult(pop=True)
+        elif key == BUTTON_UP or key == BUTTON_DOWN:
+            self.sel = 1 - self.sel  # Toggle between 0 and 1
+            return ScreenResult(dirty=True)
+        elif key == BUTTON_SELECT:
+            if self.sel == 0:  # Cancel
+                return ScreenResult(pop=True)
+            else:  # Shutdown
+                self._initiate_shutdown()
+                return ScreenResult(pop=True)
+        return ScreenResult(dirty=False)
+    
+    def _initiate_shutdown(self):
+        """Trigger system shutdown."""
+        print("User confirmed shutdown - initiating...")
+        
+        # Turn off NeoKey LEDs before shutdown
+        if self.neokey:
+            self.neokey.set_brightness(0.0)
+            time.sleep(0.1)  # Brief pause to ensure it takes effect
+        
+        try:
+            subprocess.run(["sudo", "shutdown", "-h", "now"], check=True)
+        except subprocess.CalledProcessError as e:
+            print(f"Failed to initiate shutdown: {e}")
+        except FileNotFoundError:
+            print("Shutdown command not found - running in development environment?")
+    
+    def render(self, draw: ImageDraw.ImageDraw, w: int, h: int) -> None:
+        draw.rectangle((0,0,w-1,h-1), outline=1, fill=0)
+        
+        # Title
+        draw.text((4, 2), "Shutdown System?", fill=1)
+        
+        # Options
+        y = 20
+        options = ["Cancel", "Shutdown"]
+        for i, option in enumerate(options):
+            prefix = "> " if i == self.sel else "  "
+            draw.text((4, y), prefix + option, fill=1)
+            y += 12
+        
+        # Instructions
+        draw.text((4, h - 24), "UP/DOWN: Select", fill=1)
+        draw.text((4, h - 12), "LEFT: Cancel, SELECT: Confirm", fill=1)
+
+class Menu:
+    def __init__(self, midi_adapter=None, config=None, chord_capture=None, neokey=None, alsa_router=None):
+        self._stack: List[Screen] = [HomeScreen()]
+        self.dirty = True
+        self.midi = midi_adapter
+        self.cfg = config
+        self.chord_capture = chord_capture
+        self.neokey = neokey
+        self.alsa_router = alsa_router
+        
+        # Long press detection for shutdown
+        self._back_press_start = None
+        self._back_long_press_threshold = 2.2  # 2.2 seconds of hold before it shuts down
+        self._back_long_press_triggered = False
+        
+        # Set chord_capture reference for the home screen
+        if chord_capture and isinstance(self._stack[0], HomeScreen):
+            self._stack[0]._chord_capture = chord_capture
+
+    def _top(self) -> Screen:
+        return self._stack[-1]
+
+    def push(self, screen: Screen):
+        if isinstance(screen, MidiSettingsScreen):
+            screen.attach(self.midi, self.cfg, self.alsa_router)
+        elif isinstance(screen, UtilitiesScreen):
+            screen.attach(self.chord_capture, self.cfg, self.neokey)
+        elif isinstance(screen, ChordCaptureMenuScreen):
+            screen.attach(self.chord_capture, self.cfg, self.alsa_router)
+        # REMOVED: DDTiSyncScreen attachment - no longer used in menus
+        elif isinstance(screen, HomeScreen) and self.chord_capture:
+            screen._chord_capture = self.chord_capture
+        
+        # NEW: Call activate if the screen has it
+        if hasattr(screen, 'activate'):
+            screen.activate()
+
+        self._stack.append(screen)
+        self.dirty = True
+
+    def pop(self):
+        if len(self._stack) > 1:
+            # NEW: Call deactivate if the screen has it
+            top = self._stack[-1]
+            if hasattr(top, 'deactivate'):
+                top.deactivate()
+            self._stack.pop()
+            self.dirty = True
+
+    def handle_events(self, events):
+        for event_type, key_idx in events:
+            if event_type == "press":
+                if key_idx == BUTTON_LEFT:
+                    self._back_press_start = time.monotonic()
+                    self._back_long_press_triggered = False
+                
+                result = self._top().on_key(key_idx)
+                if result.push:
+                    self.push(result.push)
+                elif result.pop:
+                    self.pop()
+                if result.dirty:
+                    self.dirty = True
+            elif event_type == "release":
+                if key_idx == BUTTON_LEFT:
+                    self._back_press_start = None
+                    self._back_long_press_triggered = False
+
+    def update(self) -> bool:
+        """Update active screen and check for long press. Return True if screen changed."""
+        current_time = time.monotonic()
+        
+        # Check for back button long press
+        if (self._back_press_start and 
+            not self._back_long_press_triggered and
+            (current_time - self._back_press_start) >= self._back_long_press_threshold):
+            
+            # Trigger shutdown confirmation - pass neokey reference
+            self._back_long_press_triggered = True
+            self.push(ShutdownConfirmScreen(neokey=self.neokey))
+            return True
+        
+        top = self._top()
+        
+        # NEW: update any screen that implements update()
+        if hasattr(top, "update"):
+            try:
+                result = top.update()
+            except Exception as e:
+                print(f"Screen update error ({top.__class__.__name__}): {e}")
+                return False
+            else:
+                if isinstance(result, ScreenResult):
+                    if result.pop:
+                        self.pop()
+                        return True
+                    if result.dirty:
+                        self.dirty = True
+        
+        return False
+
+    def render_into(self, draw, w, h):
+        self._top().render(draw, w, h)
+
+# Keep DDTiSyncScreen class for potential future use, but remove from active menu system
 class DDTiSyncScreen(Screen):
     """
     Screen that waits for a manual DDTi bank dump to ingest kit0.
     User triggers dump on the hardware; we watch incoming MIDI for kit0 bulk frame.
+    
+    NOTE: This screen is kept for potential future use but is no longer part of the
+    active menu system. The new Learn Mapping workflow has replaced DDTi dumps.
     """
     def __init__(self, chord_capture):
         self._cc = chord_capture
@@ -848,7 +935,7 @@ class DDTiSyncScreen(Screen):
         self._start_ts = time.monotonic()
         self._sysex_count = 0
         self._debug_messages = []
-        # NEW: Add state for managing ALSA router
+        # Add state for managing ALSA router
         self._alsa_router = None
         self._prev_ddti_thru = None
 
@@ -875,24 +962,17 @@ class DDTiSyncScreen(Screen):
         """Called when the screen is closed. Restores DDTi thru."""
         self._add_debug("Deactivating Sync...")
         if self._alsa_router and self._prev_ddti_thru is not None:
-            if self._prev_ddti_thru:
-                self._add_debug("Restoring DDTi thru")
-                self._alsa_router.set_ddti_thru(True)
-            self._prev_ddti_thru = None
-        
-        # Reopen ports again to let the filter grab the port back
-        # and restore the main app's normal MIDI state.
-        self._cc.midi.reopen_ports()
+            self._add_debug("Restoring DDTi thru")
+            self._alsa_router.set_ddti_thru(self._prev_ddti_thru)
 
     def _add_debug(self, msg: str):
         """Add a debug message with timestamp."""
-        timestamp = time.strftime("%H:%M:%S")
-        debug_msg = f"{timestamp}: {msg}"
-        print(f"DDTi Sync: {debug_msg}")
-        self._debug_messages.append(debug_msg)
-        # Keep only last 5 messages
-        if len(self._debug_messages) > 5:
+        ts = time.strftime("%H:%M:%S", time.localtime())
+        full_msg = f"{ts}: {msg}"
+        self._debug_messages.append(full_msg)
+        if len(self._debug_messages) > 5:  # Keep only last 5 messages
             self._debug_messages.pop(0)
+        print(f"DDTiSync: {full_msg}")
 
     def render(self, draw: ImageDraw.ImageDraw, w: int, h: int) -> None:
         draw.rectangle((0,0,w-1,h-1), outline=1, fill=0)
@@ -906,9 +986,6 @@ class DDTiSyncScreen(Screen):
             draw.text((4, y), "No DDTi input ✗", fill=1)
             y += 10
         
-        # Show SysEx count only
-        # draw.text((4, y), f"SysEx: {self._sysex_count}", fill=1)
-                
         # One blank line after header
         y += 7
         
@@ -921,15 +998,15 @@ class DDTiSyncScreen(Screen):
             text1_x = (w - text1_w) // 2
             draw.text((text1_x, y), text1, fill=1)
             
-            # Center "Auto-exiting..."
-            text2 = "Auto-exiting..."
+            # Center "SELECT to continue"
+            text2 = "SELECT to continue"
             bbox2 = draw.textbbox((0, 0), text2)
             text2_w = bbox2[2] - bbox2[0]
             text2_x = (w - text2_w) // 2
-            draw.text((text2_x, y + 12), text2, fill=1)
+            draw.text((text2_x, y + 10), text2, fill=1)
         else:
-            # Center "Waiting for DDTi"
-            text1 = "Waiting for DDTi"
+            # Center "Trigger DDTi"
+            text1 = "Trigger DDTi"
             bbox1 = draw.textbbox((0, 0), text1)
             text1_w = bbox1[2] - bbox1[0]
             text1_x = (w - text1_w) // 2
@@ -946,7 +1023,7 @@ class DDTiSyncScreen(Screen):
             bbox3 = draw.textbbox((0, 0), text3)
             text3_w = bbox3[2] - bbox3[0]
             text3_x = (w - text3_w) // 2
-            draw.text((text3_x, y + 29), text3, fill=1)
+            draw.text((text3_x, y + 20), text3, fill=1)
 
     def on_key(self, key: int) -> ScreenResult:
         if key == BUTTON_LEFT:
@@ -990,7 +1067,7 @@ class DDTiSyncScreen(Screen):
                 if not before_bulk and after_bulk:
                     self._add_debug("*** Kit0 captured! ***")
                     
-                    # NEW: Record the captured kit0 state as the initial undo point
+                    # Record the captured kit0 state as the initial undo point
                     notes = self._cc.ddti.extract_kit0_notes()
                     if notes:
                         # Store this as the "original" state for undo
@@ -1026,7 +1103,6 @@ class HomeScreen(Screen):
         self.items = [
             "Chord Capture",
             "MIDI Settings",
-            "DDTi Sync",        # NEW
             "Utilities",
         ]
         self.sel = 0
@@ -1047,16 +1123,18 @@ class HomeScreen(Screen):
                 return ScreenResult(push=ChordCaptureMenuScreen(), dirty=True)
             elif label == "Utilities":
                 return ScreenResult(push=UtilitiesScreen(), dirty=True)
-            elif label == "DDTi Sync":
-                return ScreenResult(push=DDTiSyncScreen(self._chord_capture), dirty=True)
             return ScreenResult(dirty=False)
         return ScreenResult(dirty=False)
 
     def render(self, draw: ImageDraw.ImageDraw, w: int, h: int) -> None:
         draw.rectangle((0,0,w-1,h-1), outline=1, fill=0)
-        title = "ChordToKit"
-        draw.text((4, 2), title, fill=1)
-        y = 14
+        draw.text((4, 2), "ChordToKit", fill=1)
+        
+        # Show if we have learned mapping
+        if self._chord_capture and self._chord_capture.has_learned_mapping():
+            draw.text((80, 2), "✓", fill=1)  # Checkmark if learned
+        
+        y = 16
         for i, item in enumerate(self.items):
             prefix = "> " if i == self.sel else "  "
             draw.text((4, y), prefix + item, fill=1)
@@ -1080,41 +1158,43 @@ class MidiSettingsScreen(Screen):
 
     def _cycle_in(self):
         """Cycle through available MIDI input ports."""
-        if not hasattr(self, "_midi") or not self._midi:
-            return
         inputs = self._midi.get_inputs()
+        current = self._midi.get_in_port_name()
+        
         if not inputs:
             return
-        current = self._midi.get_selected_in()
+            
         try:
-            idx = inputs.index(current) if current in inputs else -1
-        except ValueError:
-            idx = -1
-        next_idx = (idx + 1) % len(inputs)
-        new_input = inputs[next_idx]
-        self._midi.set_in(new_input)
-        # persist
-        self._cfg.set("midi_in_name", new_input)
-        self._cfg.save()
+            current_idx = inputs.index(current) if current else -1
+            new_idx = (current_idx + 1) % len(inputs)
+            new_port = inputs[new_idx]
+            
+            self._cfg.set("midi_in_name", new_port)
+            self._cfg.save()
+            self._midi.set_in(new_port)
+            print(f"MIDI input changed to: {new_port}")
+        except Exception as e:
+            print(f"Error cycling MIDI input: {e}")
 
     def _cycle_out(self):
         """Cycle through available MIDI output ports."""
-        if not hasattr(self, "_midi") or not self._midi:
-            return
         outputs = self._midi.get_outputs()
+        current = self._midi.get_out_port_name()
+        
         if not outputs:
             return
-        current = self._midi.get_selected_out()
+            
         try:
-            idx = outputs.index(current) if current in outputs else -1
-        except ValueError:
-            idx = -1
-        next_idx = (idx + 1) % len(outputs)
-        new_output = outputs[next_idx]
-        self._midi.set_out(new_output)
-        # persist
-        self._cfg.set("midi_out_name", new_output)
-        self._cfg.save()
+            current_idx = outputs.index(current) if current else -1
+            new_idx = (current_idx + 1) % len(outputs)
+            new_port = outputs[new_idx]
+            
+            self._cfg.set("midi_out_name", new_port)
+            self._cfg.save()
+            self._midi.set_out(new_port)
+            print(f"MIDI output changed to: {new_port}")
+        except Exception as e:
+            print(f"Error cycling MIDI output: {e}")
 
     def _toggle_keyboard_thru(self):
         """Toggle keyboard ALSA thru routing."""
@@ -1178,59 +1258,56 @@ class MidiSettingsScreen(Screen):
 
 class ShutdownConfirmScreen(Screen):
     def __init__(self, neokey=None):
-        self._neokey = neokey  # Store neokey reference
+        self.neokey = neokey
+        self.sel = 0  # 0 = Cancel, 1 = Shutdown
         
     def on_key(self, key: int) -> ScreenResult:
-        if key == BUTTON_SELECT:  # Enter key - confirm shutdown
-            self._shutdown()
-            return ScreenResult(dirty=False)  # App will exit
-        if key == BUTTON_LEFT:  # Back button - cancel
+        if key == BUTTON_LEFT:  # Cancel
             return ScreenResult(pop=True)
+        elif key == BUTTON_UP or key == BUTTON_DOWN:
+            self.sel = 1 - self.sel  # Toggle between 0 and 1
+            return ScreenResult(dirty=True)
+        elif key == BUTTON_SELECT:
+            if self.sel == 0:  # Cancel
+                return ScreenResult(pop=True)
+            else:  # Shutdown
+                self._initiate_shutdown()
+                return ScreenResult(pop=True)
         return ScreenResult(dirty=False)
     
-    def _shutdown(self):
-        """Perform system shutdown."""
+    def _initiate_shutdown(self):
+        """Trigger system shutdown."""
+        print("User confirmed shutdown - initiating...")
+        
+        # Turn off NeoKey LEDs before shutdown
+        if self.neokey:
+            self.neokey.set_brightness(0.0)
+            time.sleep(0.1)  # Brief pause to ensure it takes effect
+        
         try:
-            print("Shutting down system...")
-            
-            # Turn off NeoKey LEDs first
-            if self._neokey:
-                self._neokey.clear()
-                print("NeoKey LEDs turned off")
-            
-            # Clear screen and show "safe to unplug" message
-            from hw.oled import Oled  # Import here to avoid circular imports
-            oled = Oled()
-            img, draw = oled.begin_frame()
-            
-            # Clear screen completely
-            draw.rectangle((0, 0, oled.width-1, oled.height-1), outline=0, fill=0)
-            
-            # Center "safe to unplug" message
-            message = "safe to unplug"
-            bbox = draw.textbbox((0, 0), message)
-            text_w = bbox[2] - bbox[0]
-            text_h = bbox[3] - bbox[1]
-            x = (oled.width - text_w) // 2
-            y = (oled.height - text_h) // 2
-            draw.text((x, y), message, fill=1)
-            
-            oled.show(img)
-            
-            # Use subprocess to run shutdown command
-            subprocess.run(['sudo', 'shutdown', '-h', 'now'], check=True)
-        except Exception as e:
-            print(f"Shutdown failed: {e}")
-            # Could add error handling here if needed
+            subprocess.run(["sudo", "shutdown", "-h", "now"], check=True)
+        except subprocess.CalledProcessError as e:
+            print(f"Failed to initiate shutdown: {e}")
+        except FileNotFoundError:
+            print("Shutdown command not found - running in development environment?")
     
     def render(self, draw: ImageDraw.ImageDraw, w: int, h: int) -> None:
-        draw.rectangle((0, 0, w-1, h-1), outline=1, fill=0)
+        draw.rectangle((0,0,w-1,h-1), outline=1, fill=0)
         
-        # Simple shutdown question - centered
-        question = "Shutdown?"
-        bbox = draw.textbbox((0, 0), question)
-        text_w = bbox[2] - bbox[0]
-        draw.text(((w - text_w) // 2, h // 2 - 6), question, fill=1)
+        # Title
+        draw.text((4, 2), "Shutdown System?", fill=1)
+        
+        # Options
+        y = 20
+        options = ["Cancel", "Shutdown"]
+        for i, option in enumerate(options):
+            prefix = "> " if i == self.sel else "  "
+            draw.text((4, y), prefix + option, fill=1)
+            y += 12
+        
+        # Instructions
+        draw.text((4, h - 24), "UP/DOWN: Select", fill=1)
+        draw.text((4, h - 12), "LEFT: Cancel, SELECT: Confirm", fill=1)
 
 class Menu:
     def __init__(self, midi_adapter=None, config=None, chord_capture=None, neokey=None, alsa_router=None):
@@ -1271,8 +1348,7 @@ class Menu:
             screen.attach(self.chord_capture, self.cfg, self.neokey)
         elif isinstance(screen, ChordCaptureMenuScreen):
             screen.attach(self.chord_capture, self.cfg, self.alsa_router)
-        elif isinstance(screen, DDTiSyncScreen): # NEW
-            screen.attach(self.chord_capture, self.cfg, self.alsa_router)
+        # REMOVED: DDTiSyncScreen attachment - no longer used in menus
         elif isinstance(screen, HomeScreen) and self.chord_capture:
             screen._chord_capture = self.chord_capture
         
@@ -1285,48 +1361,31 @@ class Menu:
 
     def pop(self):
         if len(self._stack) > 1:
+            # NEW: Call deactivate if the screen has it
+            top = self._stack[-1]
+            if hasattr(top, 'deactivate'):
+                top.deactivate()
             self._stack.pop()
             self.dirty = True
 
-    def handle_events(self, key_events: List[tuple]):
-        """Consume NeoKey events [('press'|'release', idx), ...]."""
-        acted = False
-        current_time = time.monotonic()
-        
-        for ev, idx in key_events:
-            action = self._logical_to_action(idx)
-            if action is None:
-                continue
-                
-            # Handle back button long press for shutdown
-            if action == BUTTON_LEFT:
-                if ev == 'press':
-                    self._back_press_start = current_time
+    def handle_events(self, events):
+        for event_type, key_idx in events:
+            if event_type == "press":
+                if key_idx == BUTTON_LEFT:
+                    self._back_press_start = time.monotonic()
                     self._back_long_press_triggered = False
-                elif ev == 'release':
-                    if self._back_press_start and not self._back_long_press_triggered:
-                        # Normal short press - handle as usual
-                        res = self._top().on_key(action)
-                        if res.push:
-                            self.push(res.push)
-                        if res.pop:
-                            self.pop()
-                        if res.dirty:
-                            acted = True
+                
+                result = self._top().on_key(key_idx)
+                if result.push:
+                    self.push(result.push)
+                elif result.pop:
+                    self.pop()
+                if result.dirty:
+                    self.dirty = True
+            elif event_type == "release":
+                if key_idx == BUTTON_LEFT:
                     self._back_press_start = None
                     self._back_long_press_triggered = False
-            elif ev == 'press':
-                # Handle other button presses normally
-                res = self._top().on_key(action)
-                if res.push:
-                    self.push(res.push)
-                if res.pop:
-                    self.pop()
-                if res.dirty:
-                    acted = True
-                    
-        if acted:
-            self.dirty = True
 
     def update(self) -> bool:
         """Update active screen and check for long press. Return True if screen changed."""
@@ -1344,9 +1403,6 @@ class Menu:
         
         top = self._top()
         
-        # OLD:
-        # if isinstance(top, (ChordCaptureScreen, SingleNoteCaptureScreen)):
-        #     result = top.update()
         # NEW: update any screen that implements update()
         if hasattr(top, "update"):
             try:
@@ -1364,7 +1420,239 @@ class Menu:
         
         return False
 
-    # --- Rendering helpers ---
-    def render_into(self, draw: ImageDraw.ImageDraw, w: int, h: int):
+    def render_into(self, draw, w, h):
         self._top().render(draw, w, h)
+
+# Keep DDTiSyncScreen class for potential future use, but remove from active menu system
+class DDTiSyncScreen(Screen):
+    """
+    Screen that waits for a manual DDTi bank dump to ingest kit0.
+    User triggers dump on the hardware; we watch incoming MIDI for kit0 bulk frame.
+    
+    NOTE: This screen is kept for potential future use but is no longer part of the
+    active menu system. The new Learn Mapping workflow has replaced DDTi dumps.
+    """
+    def __init__(self, chord_capture):
+        self._cc = chord_capture
+        self._done = False
+        self._status = "Waiting for dump..."
+        self._last_notes = None
+        self._start_ts = time.monotonic()
+        self._sysex_count = 0
+        self._debug_messages = []
+        # Add state for managing ALSA router
+        self._alsa_router = None
+        self._prev_ddti_thru = None
+
+    def attach(self, chord_capture, config, alsa_router=None):
+        """Attach shared objects to the screen."""
+        self._cc = chord_capture
+        self._alsa_router = alsa_router
+
+    def activate(self):
+        """Called when the screen becomes active. Temporarily disables DDTi thru."""
+        self._add_debug("Activating Sync...")
+        if self._alsa_router:
+            self._prev_ddti_thru = self._alsa_router.get_ddti_thru()
+            if self._prev_ddti_thru:
+                self._add_debug("Disabling DDTi thru")
+                self._alsa_router.set_ddti_thru(False)
+                time.sleep(0.2)  # Give filter thread time to die and release port
+        
+        # Now that the port is hopefully free, reopen MIDI ports
+        self._add_debug("Re-opening MIDI ports")
+        self._cc.midi.reopen_ports()
+
+    def deactivate(self):
+        """Called when the screen is closed. Restores DDTi thru."""
+        self._add_debug("Deactivating Sync...")
+        if self._alsa_router and self._prev_ddti_thru is not None:
+            self._add_debug("Restoring DDTi thru")
+            self._alsa_router.set_ddti_thru(self._prev_ddti_thru)
+
+    def _add_debug(self, msg: str):
+        """Add a debug message with timestamp."""
+        ts = time.strftime("%H:%M:%S", time.localtime())
+        full_msg = f"{ts}: {msg}"
+        self._debug_messages.append(full_msg)
+        if len(self._debug_messages) > 5:  # Keep only last 5 messages
+            self._debug_messages.pop(0)
+        print(f"DDTiSync: {full_msg}")
+
+    def render(self, draw: ImageDraw.ImageDraw, w: int, h: int) -> None:
+        draw.rectangle((0,0,w-1,h-1), outline=1, fill=0)
+        draw.text((4,2), "DDTi Sync", fill=1)
+        
+        y = 14
+        
+        # Show DDTi input connection status
+        ddti_port = self._cc.midi.get_ddti_in_port_name()
+        if not ddti_port:
+            draw.text((4, y), "No DDTi input ✗", fill=1)
+            y += 10
+        
+        # One blank line after header
+        y += 7
+        
+        # Instructions - only center the main message
+        if self._done:
+            # Center "Kit0 captured!"
+            text1 = "Kit0 captured!"
+            bbox1 = draw.textbbox((0, 0), text1)
+            text1_w = bbox1[2] - bbox1[0]
+            text1_x = (w - text1_w) // 2
+            draw.text((text1_x, y), text1, fill=1)
+            
+            # Center "SELECT to continue"
+            text2 = "SELECT to continue"
+            bbox2 = draw.textbbox((0, 0), text2)
+            text2_w = bbox2[2] - bbox2[0]
+            text2_x = (w - text2_w) // 2
+            draw.text((text2_x, y + 10), text2, fill=1)
+        else:
+            # Center "Trigger DDTi"
+            text1 = "Trigger DDTi"
+            bbox1 = draw.textbbox((0, 0), text1)
+            text1_w = bbox1[2] - bbox1[0]
+            text1_x = (w - text1_w) // 2
+            draw.text((text1_x, y), text1, fill=1)
+            
+            # Center "SysEx Dump..."
+            text2 = "SysEx Dump..."
+            bbox2 = draw.textbbox((0, 0), text2)
+            text2_w = bbox2[2] - bbox2[0]
+            text2_x = (w - text2_w) // 2
+            draw.text((text2_x, y + 10), text2, fill=1)
+            
+            text3 = "(Function & Value Up)"
+            bbox3 = draw.textbbox((0, 0), text3)
+            text3_w = bbox3[2] - bbox3[0]
+            text3_x = (w - text3_w) // 2
+            draw.text((text3_x, y + 20), text3, fill=1)
+
+    def on_key(self, key: int) -> ScreenResult:
+        if key == BUTTON_LEFT:
+            self.deactivate()  # Deactivate before popping
+            return ScreenResult(pop=True)
+        if key == BUTTON_SELECT and self._done:
+            self.deactivate()  # Deactivate before popping
+            return ScreenResult(pop=True)
+        if key == BUTTON_UP and not self._done:
+            # Debug: show port status
+            ddti_port = self._cc.midi.get_ddti_in_port_name()
+            self._add_debug(f"DDTi port: {ddti_port}")
+            return ScreenResult(dirty=True)
+        if key == BUTTON_DOWN and not self._done:
+            # Debug: show current DDTi state
+            if self._cc.ddti.have_kit0_bulk():
+                notes = self._cc.ddti.extract_kit0_notes()
+                self._add_debug(f"Kit0: {notes}")
+            else:
+                self._add_debug("No kit0 bulk")
+            return ScreenResult(dirty=True)
+        return ScreenResult(dirty=False)
+
+    def update(self) -> ScreenResult:
+        # Use the new dedicated DDTi SysEx input method
+        sysex_messages = self._cc.midi.iter_ddti_sysex()
+        
+        for msg in sysex_messages:
+            self._sysex_count += 1
+            data = bytes(msg.data)
+            
+            # Log exactly like the working script
+            self._add_debug(f"SysEx len={len(data)} head={list(data[:8])}")
+            
+            # Try to ingest into DDTi
+            try:
+                before_bulk = self._cc.ddti.have_kit0_bulk()
+                self._cc.ddti.ingest_sysex_frame(data)
+                after_bulk = self._cc.ddti.have_kit0_bulk()
+                
+                if not before_bulk and after_bulk:
+                    self._add_debug("*** Kit0 captured! ***")
+                    
+                    # Record the captured kit0 state as the initial undo point
+                    notes = self._cc.ddti.extract_kit0_notes()
+                    if notes:
+                        # Store this as the "original" state for undo
+                        self._cc.record_current_state_for_undo()
+                        self._add_debug(f"Initial undo state: {notes}")
+                
+            except Exception as e:
+                self._add_debug(f"Ingest error: {e}")
+        
+        # Check if we successfully captured kit0
+        if not self._done and self._cc.ddti.have_kit0_bulk():
+            notes = self._cc.ddti.extract_kit0_notes()
+            if notes:
+                self._last_notes = notes
+                self._status = "Kit0 captured!"
+                self._done = True
+                self._add_debug(f"SUCCESS: {notes}")
+                
+                # Auto-exit after successful capture
+                time.sleep(0.5)  # Brief pause to show success
+                self.deactivate()  # Clean up ALSA routing
+                return ScreenResult(pop=True, dirty=True)  # Auto-exit
+        
+        # Auto-refresh display every 0.5 seconds
+        if (time.monotonic() - self._start_ts) > 0.5:
+            self._start_ts = time.monotonic()
+            return ScreenResult(dirty=True)
+            
+        return ScreenResult(dirty=False)
+
+class ShutdownConfirmScreen(Screen):
+    def __init__(self, neokey=None):
+        self.neokey = neokey
+        self.sel = 0  # 0 = Cancel, 1 = Shutdown
+        
+    def on_key(self, key: int) -> ScreenResult:
+        if key == BUTTON_LEFT:  # Cancel
+            return ScreenResult(pop=True)
+        elif key == BUTTON_UP or key == BUTTON_DOWN:
+            self.sel = 1 - self.sel  # Toggle between 0 and 1
+            return ScreenResult(dirty=True)
+        elif key == BUTTON_SELECT:
+            if self.sel == 0:  # Cancel
+                return ScreenResult(pop=True)
+            else:  # Shutdown
+                self._initiate_shutdown()
+                return ScreenResult(pop=True)
+        return ScreenResult(dirty=False)
+    
+    def _initiate_shutdown(self):
+        """Trigger system shutdown."""
+        print("User confirmed shutdown - initiating...")
+        
+        # Turn off NeoKey LEDs before shutdown
+        if self.neokey:
+            self.neokey.set_brightness(0.0)
+            time.sleep(0.1)  # Brief pause to ensure it takes effect
+        
+        try:
+            subprocess.run(["sudo", "shutdown", "-h", "now"], check=True)
+        except subprocess.CalledProcessError as e:
+            print(f"Failed to initiate shutdown: {e}")
+        except FileNotFoundError:
+            print("Shutdown command not found - running in development environment?")
+    
+    def render(self, draw: ImageDraw.ImageDraw, w: int, h: int) -> None:
+        draw.rectangle((0,0,w-1,h-1), outline=1, fill=0)
+        
+        # Title
+        draw.text((4, 2), "Shutdown System?", fill=1)
+        
+        # Options
+        y = 20
+        options = ["Cancel", "Shutdown"]
+        for i, option in enumerate(options):
+            prefix = "> " if i == self.sel else "  "
+            draw.text((4, y), prefix + option, fill=1)
+            y += 12
+        
+        # Instructions
+        draw.text((4, h - 24), "UP/DOWN: Select", fill=1)
+        draw.text((4, h - 12), "LEFT: Cancel, SELECT: Confirm", fill=1)
 

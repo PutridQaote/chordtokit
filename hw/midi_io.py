@@ -194,11 +194,15 @@ class Midi:
 
     # NEW: iterate ALL pending DDTi input messages (notes + sysex)
     def iter_ddti_all(self):
-        """Return list of all pending messages from DDTi input port."""
+        """Iterate over all MIDI messages from DDTi input port (not just SysEx)."""
         if not self._ddti_in_port:
             return []
-        return list(self._ddti_in_port.iter_pending())
-
+        try:
+            return list(self._ddti_in_port.iter_pending())
+        except Exception as e:
+            print(f"Error reading DDTi input: {e}")
+            return []
+    
     def get_in_port_name(self) -> Optional[str]:
         # Currently-open keyboard input (if any)
         try:
@@ -237,10 +241,24 @@ class Midi:
             print(f"Midi: Drain error ({label}): {e}")
         return cnt
 
-    def drain_all_inputs(self):
-        """Drain keyboard + DDTi input queues."""
-        total = 0
-        total += self._drain_port(self._in_port, "keyboard in")
-        if self._ddti_in_port is not self._in_port:
-            total += self._drain_port(self._ddti_in_port, "ddti in")
-        return total
+    def drain_all_inputs(self) -> int:
+        """Drain all pending MIDI messages from all input ports. Returns count of drained messages."""
+        total_drained = 0
+        
+        # Drain main keyboard input
+        if self._in_port:
+            try:
+                drained = list(self._in_port.iter_pending())
+                total_drained += len(drained)
+            except Exception:
+                pass
+                
+        # Drain DDTi input
+        if self._ddti_in_port:
+            try:
+                drained = list(self._ddti_in_port.iter_pending())
+                total_drained += len(drained)
+            except Exception:
+                pass
+                
+        return total_drained

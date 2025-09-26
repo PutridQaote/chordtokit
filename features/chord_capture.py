@@ -40,6 +40,9 @@ class ChordCapture:
         # Change history to store dict entries (type-tagged)
         self._undo_limit = max(1, int(undo_limit))
         self._history: List[dict] = []
+        
+        # NEW: Track if we have a learned trigger mapping
+        self._learned_mapping: Optional[List[int]] = None
 
     def set_allow_duplicates(self, allow: bool):
         """Change duplicate policy and clear bucket."""
@@ -74,7 +77,6 @@ class ChordCapture:
         flushed_messages = list(self.midi.iter_input())
         if flushed_messages:
             print(f"Flushed {len(flushed_messages)} stale MIDI messages on deactivate")
-
 
     def process_midi_input(self) -> Optional[List[int]]:
         """
@@ -134,6 +136,10 @@ class ChordCapture:
                     self.midi.send(sysex_msg)
                     print(f"Sent full SysEx: {len(sysex_msg.data)} bytes")
                     self.last_sent_chord = self.ddti.get_current_state()
+                    
+                    # NEW: Store this as our learned mapping for single-note capture
+                    self._learned_mapping = final_chord[:]
+                    
                 except Exception as e:
                     print(f"Error sending SysEx: {e}")
                 self.bucket.clear()
@@ -257,3 +263,20 @@ class ChordCapture:
         except Exception as e:
             print(f"Undo: Restore failed: {e}")
             return False
+
+    # NEW: Methods for learned mapping support
+    def has_learned_mapping(self) -> bool:
+        """Check if we have a learned trigger mapping for single-note capture."""
+        return self._learned_mapping is not None
+
+    def get_learned_mapping(self) -> Optional[List[int]]:
+        """Get the learned trigger mapping."""
+        return self._learned_mapping[:] if self._learned_mapping else None
+
+    def set_learned_mapping(self, mapping: List[int]):
+        """Set the learned trigger mapping."""
+        if len(mapping) == 4:
+            self._learned_mapping = mapping[:]
+            print(f"Learned mapping set: {mapping}")
+        else:
+            print(f"Invalid mapping length: {len(mapping)}, expected 4")
