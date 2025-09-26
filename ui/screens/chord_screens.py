@@ -8,9 +8,9 @@ class ChordCaptureMenuScreen(Screen):
     def __init__(self):
         self.rows = [
             ("Full Chord Capture", self._start_4_note_capture),
-            ("Learn Mapping", self._start_learn_mapping),
             ("Single Note Capture", self._start_single_note_capture),
             ("Footswitch Mode", self._toggle_footswitch_mode),
+            ("Learn Mapping", self._start_learn_mapping),
         ]
         self.sel = 0
         self._chord_capture = None

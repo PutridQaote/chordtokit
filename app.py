@@ -68,11 +68,7 @@ def main():
     if isinstance(menu._stack[0], HomeScreen):
         menu._stack[0]._chord_capture = chord_capture
 
-    # NEW: Auto-start DDTi Sync on boot
-    print("Auto-starting DDTi Sync...")
-    sync_screen = DDTiSyncScreen(chord_capture)
-    sync_screen.attach(chord_capture, cfg, alsa_router)
-    menu.push(sync_screen)
+    # Removed auto-start DDTi Sync - it should only be accessible via menu
     
     img, draw = oled.begin_frame()
     menu.render_into(draw, oled.width, oled.height)
@@ -138,7 +134,7 @@ def main():
             now = time.monotonic()
             if now - last_reconcile > 5.0:  # Every 5 seconds
                 alsa_router._reconcile_routes()
-                last_reconcile = now
+            last_reconcile = now
 
             time.sleep(0.002)  # Slightly increased sleep to balance CPU usage
     except KeyboardInterrupt:

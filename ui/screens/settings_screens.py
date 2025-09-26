@@ -10,7 +10,6 @@ class MidiSettingsScreen(Screen):
             ("Chord Out", self._cycle_out),
             ("Keyboard Thru", self._toggle_keyboard_thru),
             ("DDTi Thru", self._toggle_ddti_thru),
-            ("Back", None),
         ]
         self.sel = 0
 
@@ -127,7 +126,6 @@ class UtilitiesScreen(Screen):
             ("LoNote OctDown", self._toggle_octave_down),
             ("Undo Mapping", self._undo_mapping),
             ("LED Brightness", self._cycle_led_brightness),
-            ("Back", None),
         ]
         self.sel = 0
         self._chord_capture = None
