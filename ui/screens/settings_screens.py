@@ -123,7 +123,6 @@ class UtilitiesScreen(Screen):
     def __init__(self):
         self.rows = [
             ("Allow Duplicate Notes", self._toggle_duplicates),
-            ("LoNote OctDown", self._toggle_octave_down),
             ("Undo Mapping", self._undo_mapping),
             ("LED Brightness", self._cycle_led_brightness),
         ]
@@ -144,15 +143,6 @@ class UtilitiesScreen(Screen):
             self._cfg.set("allow_duplicate_notes", new_val)
             self._cfg.save()
             self._chord_capture.set_allow_duplicates(new_val)
-
-    def _toggle_octave_down(self):
-        """Toggle octave down for lowest note."""
-        if self._chord_capture and self._cfg:
-            current = self._cfg.get("octave_down_lowest", False)
-            new_val = not current
-            self._cfg.set("octave_down_lowest", new_val)
-            self._cfg.save()
-            self._chord_capture.set_octave_down_lowest(new_val)
 
     def _undo_mapping(self):
         """Undo the most recent mapping change."""
@@ -214,12 +204,10 @@ class UtilitiesScreen(Screen):
         draw.text((4, 2), "Utilities", fill=1)
         
         allow_dupes = self._cfg.get("allow_duplicate_notes", False) if self._cfg else False
-        octave_down = self._cfg.get("octave_down_lowest", False) if self._cfg else False
         led_brightness = self._get_led_brightness_label()
         
         body = [
             f"Duplicates: {'On' if allow_dupes else 'Off'}",
-            f"LoNote OctDown: {'On' if octave_down else 'Off'}",
             "Undo Mapping",
             f"LEDs: {led_brightness}",
             "Back",

@@ -9,11 +9,13 @@ class HomeScreen(Screen):
     def __init__(self):
         self.items = [
             "Chord Capture",
+            "Learn Mapping",
             "MIDI Settings",
             "Utilities",
         ]
         self.sel = 0
         self._chord_capture = None  # Will be set by Menu
+        self._cfg = None  # Will be set by Menu
 
     def on_key(self, key: int) -> ScreenResult:
         if key == BUTTON_UP:
@@ -30,6 +32,13 @@ class HomeScreen(Screen):
             elif label == "Chord Capture":
                 from .chord_screens import ChordCaptureMenuScreen
                 return ScreenResult(push=ChordCaptureMenuScreen(), dirty=True)
+            elif label == "Learn Mapping":
+                from .chord_screens import LearnMappingScreen
+                if self._chord_capture:
+                    screen = LearnMappingScreen(self._chord_capture, config=self._cfg)
+                    screen.activate()
+                    return ScreenResult(push=screen, dirty=True)
+                return ScreenResult(dirty=False)
             elif label == "Utilities":
                 from .settings_screens import UtilitiesScreen
                 return ScreenResult(push=UtilitiesScreen(), dirty=True)

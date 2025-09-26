@@ -9,8 +9,8 @@ class ChordCaptureMenuScreen(Screen):
         self.rows = [
             ("Full Chord Capture", self._start_4_note_capture),
             ("Single Note Capture", self._start_single_note_capture),
+            ("LoNote Oct Down", self._toggle_octave_down),
             ("Footswitch Mode", self._toggle_footswitch_mode),
-            ("Learn Mapping", self._start_learn_mapping),
         ]
         self.sel = 0
         self._chord_capture = None
@@ -51,16 +51,15 @@ class ChordCaptureMenuScreen(Screen):
                 return ScreenResult(push=screen, dirty=True)
         return ScreenResult(dirty=False)
     
-    def _start_learn_mapping(self):
-        """Start the learn mapping mode."""
-        if self._chord_capture:
-            print("Menu: Starting learn mapping")
-            screen = LearnMappingScreen(self._chord_capture, config=self._cfg)
-            if self._alsa_router:
-                screen.set_alsa_router(self._alsa_router)
-            screen.activate()
-            return ScreenResult(push=screen, dirty=True)
-        return ScreenResult(dirty=False)
+    def _toggle_octave_down(self):
+        """Toggle octave down for lowest note."""
+        if self._chord_capture and self._cfg:
+            current = self._cfg.get("octave_down_lowest", False)
+            new_val = not current
+            self._cfg.set("octave_down_lowest", new_val)
+            self._cfg.save()
+            self._chord_capture.set_octave_down_lowest(new_val)
+        return ScreenResult(dirty=True)
 
     def _toggle_footswitch_mode(self):
         """Toggle footswitch mode between 'all' (4-note) and 'single' (1-note)."""
@@ -77,6 +76,13 @@ class ChordCaptureMenuScreen(Screen):
             return "All"
         mode = self._cfg.get("footswitch_capture_mode", "all")
         return "All" if mode == "all" else "1 Note"
+
+    def _get_octave_down_label(self) -> str:
+        """Get the current octave down setting as a label."""
+        if not self._cfg:
+            return "Off"
+        octave_down = self._cfg.get("octave_down_lowest", False)
+        return "On" if octave_down else "Off"
 
     def on_key(self, key: int) -> ScreenResult:
         if key == BUTTON_UP:
@@ -101,11 +107,12 @@ class ChordCaptureMenuScreen(Screen):
         draw.text((4, 2), "Chord Capture", fill=1)
         
         footswitch_mode = self._get_footswitch_mode_label()
+        octave_down = self._get_octave_down_label()
         
         body = [
             "Full Chord Capture",
-            "Learn Mapping",
             "Single Note Capture",
+            f"LoNote Oct Down: {octave_down}",
             f"Footswitch: {footswitch_mode}",
         ]
         y = 14

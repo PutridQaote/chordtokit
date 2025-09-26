@@ -25,9 +25,12 @@ class Menu:
         self._back_long_press_threshold = 2.2  # 2.2 seconds of hold before it shuts down
         self._back_long_press_triggered = False
         
-        # Set chord_capture reference for the home screen
-        if chord_capture and isinstance(self._stack[0], HomeScreen):
-            self._stack[0]._chord_capture = chord_capture
+        # Set chord_capture and config references for the home screen
+        if isinstance(self._stack[0], HomeScreen):
+            if chord_capture:
+                self._stack[0]._chord_capture = chord_capture
+            if config:
+                self._stack[0]._cfg = config
 
     # Map NeoKey logical indices → UI actions
     def _logical_to_action(self, idx: int) -> Optional[int]:
@@ -51,8 +54,16 @@ class Menu:
         elif isinstance(screen, ChordCaptureMenuScreen):
             screen.attach(self.chord_capture, self.cfg, self.alsa_router)
         # REMOVED: DDTiSyncScreen attachment - no longer used in menus
-        elif isinstance(screen, HomeScreen) and self.chord_capture:
-            screen._chord_capture = self.chord_capture
+        elif isinstance(screen, HomeScreen):
+            if self.chord_capture:
+                screen._chord_capture = self.chord_capture
+            if self.cfg:
+                screen._cfg = self.cfg
+        
+        # Handle LearnMappingScreen from main menu - need to import here to avoid circular imports
+        elif screen.__class__.__name__ == 'LearnMappingScreen':
+            if self.alsa_router:
+                screen.set_alsa_router(self.alsa_router)
         
         # NEW: Call activate if the screen has it
         if hasattr(screen, 'activate'):
