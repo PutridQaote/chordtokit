@@ -7,7 +7,9 @@ from hw.neokey import NeoKey
 from hw.oled import Oled
 from hw.midi_io import Midi
 from hw.footswitch import Footswitch
-from ui.menu import Menu, ChordCaptureScreen, SingleNoteCaptureScreen, HomeScreen, DDTiSyncScreen
+from ui import Menu
+from ui.screens.chord_screens import ChordCaptureScreen, SingleNoteCaptureScreen
+from ui.screens.system_screens import HomeScreen, DDTiSyncScreen
 from features.chord_capture import ChordCapture
 
 import subprocess
@@ -66,8 +68,11 @@ def main():
     if isinstance(menu._stack[0], HomeScreen):
         menu._stack[0]._chord_capture = chord_capture
 
-    # REMOVED: Auto-start DDTi Sync on boot - replaced with Learn Mapping system
-    # The new Learn Mapping workflow handles trigger discovery without needing a DDTi dump
+    # NEW: Auto-start DDTi Sync on boot
+    print("Auto-starting DDTi Sync...")
+    sync_screen = DDTiSyncScreen(chord_capture)
+    sync_screen.attach(chord_capture, cfg, alsa_router)
+    menu.push(sync_screen)
     
     img, draw = oled.begin_frame()
     menu.render_into(draw, oled.width, oled.height)
@@ -84,7 +89,6 @@ def main():
                 events = nk.read_events()
                 if events:
                     menu.handle_events(events)
-                    
                     # Process screen updates immediately after events
                     screen_changed = menu.update()
                     if menu.dirty or screen_changed:
