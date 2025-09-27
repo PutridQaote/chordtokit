@@ -63,25 +63,23 @@ class HomeScreen(Screen):
 class ShutdownConfirmScreen(Screen):
     def __init__(self, neokey=None):
         self.neokey = neokey
-        self.sel = 0  # 0 = Cancel, 1 = Shutdown
+        self.shutting_down = False
         
     def on_key(self, key: int) -> ScreenResult:
+        if self.shutting_down:
+            return ScreenResult(dirty=False)  # Ignore all input during shutdown
+            
         if key == BUTTON_LEFT:  # Cancel
             return ScreenResult(pop=True)
-        elif key == BUTTON_UP or key == BUTTON_DOWN:
-            self.sel = 1 - self.sel  # Toggle between 0 and 1
-            return ScreenResult(dirty=True)
-        elif key == BUTTON_SELECT:
-            if self.sel == 0:  # Cancel
-                return ScreenResult(pop=True)
-            else:  # Shutdown
-                self._initiate_shutdown()
-                return ScreenResult(pop=True)
+        elif key == BUTTON_SELECT:  # Confirm shutdown
+            self._initiate_shutdown()
+            return ScreenResult(dirty=True)  # Stay on screen to show "safe to unplug"
         return ScreenResult(dirty=False)
     
     def _initiate_shutdown(self):
         """Trigger system shutdown."""
         print("User confirmed shutdown - initiating...")
+        self.shutting_down = True
         
         # Turn off NeoKey LEDs before shutdown
         if self.neokey:
@@ -94,24 +92,26 @@ class ShutdownConfirmScreen(Screen):
             print(f"Failed to initiate shutdown: {e}")
         except FileNotFoundError:
             print("Shutdown command not found - running in development environment?")
-    
+
     def render(self, draw, w: int, h: int) -> None:
         draw.rectangle((0,0,w-1,h-1), outline=1, fill=0)
         
-        # Title
-        draw.text((4, 2), "Shutdown System?", fill=1)
-        
-        # Options
-        y = 20
-        options = ["Cancel", "Shutdown"]
-        for i, option in enumerate(options):
-            prefix = "> " if i == self.sel else "  "
-            draw.text((4, y), prefix + option, fill=1)
-            y += 12
-        
-        # Instructions
-        draw.text((4, h - 24), "UP/DOWN: Select", fill=1)
-        draw.text((4, h - 12), "LEFT: Cancel, SELECT: Confirm", fill=1)
+        if self.shutting_down:
+            # Center "Safe to unplug" message
+            text = "safe to unplug"
+            bbox = draw.textbbox((0, 0), text)
+            text_w = bbox[2] - bbox[0]
+            text_x = (w - text_w) // 2
+            text_y = h // 2 - 6
+            draw.text((text_x, text_y), text, fill=1)
+        else:
+            # Center "Shutdown System?" message  
+            text = "Shutdown System?"
+            bbox = draw.textbbox((0, 0), text)
+            text_w = bbox[2] - bbox[0]
+            text_x = (w - text_w) // 2
+            text_y = h // 2 - 6
+            draw.text((text_x, text_y), text, fill=1)
 
 
 # Keep DDTiSyncScreen class for potential future use, but remove from active menu system
