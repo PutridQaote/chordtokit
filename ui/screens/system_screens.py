@@ -63,17 +63,22 @@ class HomeScreen(Screen):
 class ShutdownConfirmScreen(Screen):
     def __init__(self, neokey=None):
         self.neokey = neokey
+        self.shutting_down = False
         
     def on_key(self, key: int) -> ScreenResult:
+        if self.shutting_down:
+            return ScreenResult(dirty=False)
+            
         if key == BUTTON_LEFT:  # Cancel
             return ScreenResult(pop=True)
         elif key == BUTTON_SELECT:  # Confirm shutdown
             self._shutdown()
-            return ScreenResult(dirty=False)  # App will exit, no need to update
+            self.shutting_down = True
+            return ScreenResult(dirty=True)  # Update to show "safe to unplug"
         return ScreenResult(dirty=False)
     
     def _shutdown(self):
-        """Perform system shutdown with proper display update."""
+        """Perform system shutdown."""
         try:
             print("Shutting down system...")
             
@@ -82,45 +87,39 @@ class ShutdownConfirmScreen(Screen):
                 self.neokey.set_brightness(0.0)
                 print("NeoKey LEDs turned off")
             
-            # Import OLED here to avoid circular imports
-            from hw.oled import Oled
-            oled = Oled()
-            img, draw = oled.begin_frame()
+            # Use threading to delay shutdown so we can show "safe to unplug" first
+            import threading
+            def delayed_shutdown():
+                time.sleep(0.5)  # Give time for display to update
+                try:
+                    subprocess.run(['sudo', 'shutdown', '-h', 'now'], check=True)
+                except Exception as e:
+                    print(f"Shutdown command failed: {e}")
             
-            # Clear screen completely
-            draw.rectangle((0, 0, oled.width-1, oled.height-1), outline=0, fill=0)
-            
-            # Center "safe to unplug" message
-            message = "safe to unplug"
-            bbox = draw.textbbox((0, 0), message)
-            text_w = bbox[2] - bbox[0]
-            text_h = bbox[3] - bbox[1]
-            x = (oled.width - text_w) // 2
-            y = (oled.height - text_h) // 2
-            draw.text((x, y), message, fill=1)
-            
-            # Show the message immediately
-            oled.show(img)
-            
-            # Brief pause to ensure display updates
-            time.sleep(0.1)
-            
-            # Initiate shutdown
-            subprocess.run(['sudo', 'shutdown', '-h', 'now'], check=True)
+            threading.Thread(target=delayed_shutdown, daemon=True).start()
             
         except Exception as e:
-            print(f"Shutdown failed: {e}")
+            print(f"Shutdown setup failed: {e}")
 
     def render(self, draw, w: int, h: int) -> None:
         draw.rectangle((0, 0, w-1, h-1), outline=1, fill=0)
         
-        # Center "Shutdown System?" message  
-        text = "Shutdown System?"
-        bbox = draw.textbbox((0, 0), text)
-        text_w = bbox[2] - bbox[0]
-        text_x = (w - text_w) // 2
-        text_y = h // 2 - 6
-        draw.text((text_x, text_y), text, fill=1)
+        if self.shutting_down:
+            # Center "safe to unplug" message
+            text = "safe to unplug"
+            bbox = draw.textbbox((0, 0), text)
+            text_w = bbox[2] - bbox[0]
+            text_x = (w - text_w) // 2
+            text_y = h // 2 - 6
+            draw.text((text_x, text_y), text, fill=1)
+        else:
+            # Center "Shutdown System?" message  
+            text = "Shutdown System?"
+            bbox = draw.textbbox((0, 0), text)
+            text_w = bbox[2] - bbox[0]
+            text_x = (w - text_w) // 2
+            text_y = h // 2 - 6
+            draw.text((text_x, text_y), text, fill=1)
 
 
 # Keep DDTiSyncScreen class for potential future use, but remove from active menu system
