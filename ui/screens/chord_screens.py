@@ -126,7 +126,7 @@ class LearnMappingScreen(BaseCaptureScreen):
     """Screen for learning the 4 trigger mappings in order: KICK, SNARE, HI-HAT, RIDE."""
     
     def __init__(self, chord_capture, config=None, auto_continue_to_single=False):
-        super().__init__(chord_capture, turns=10, 
+        super().__init__(chord_capture, turns=2, 
                         config_key="spiral_turns_learn", config=config)
         
         self.trigger_names = ["KICK", "SNARE", "HI-HAT", "RIDE"]
@@ -222,31 +222,35 @@ class LearnMappingScreen(BaseCaptureScreen):
     def render(self, draw, w: int, h: int) -> None:
         if not self._render_base_frame(draw, w, h):
             return
+        
+        # Show heading at top center
+        heading = "Learning Mapping..."
+        bbox = draw.textbbox((0, 0), heading)
+        text_w = bbox[2] - bbox[0]
+        text_x = (w - text_w) // 2
+        draw.text((text_x, 2), heading, fill=1)
             
-        # Show which trigger we're learning
+        # Show which trigger we're learning in the center
         if self.current_trigger < len(self.trigger_names):
             trigger_name = self.trigger_names[self.current_trigger]
-            step_text = f"{trigger_name} ({self.current_trigger + 1})"
+            step_text = f"Hit {trigger_name}"
             
-            # Center the trigger name at top
+            # Center the trigger instruction in the exact middle of screen
             bbox = draw.textbbox((0, 0), step_text)
             text_w = bbox[2] - bbox[0]
+            text_h = bbox[3] - bbox[1]
             text_x = (w - text_w) // 2
-            draw.text((text_x, 4), step_text, fill=1)
-            
-            # Show instruction
-            instruction = "Hit the trigger"
-            bbox = draw.textbbox((0, 0), instruction)
-            text_w = bbox[2] - bbox[0]
-            text_x = (w - text_w) // 2
-            draw.text((text_x, h - 15), instruction, fill=1)
+            text_y = (h - text_h) // 2
+            draw.text((text_x, text_y), step_text, fill=1)
         else:
-            # Learning complete
+            # Learning complete - center this too
             complete_text = "Mapping Complete!"
             bbox = draw.textbbox((0, 0), complete_text)
             text_w = bbox[2] - bbox[0]
+            text_h = bbox[3] - bbox[1]
             text_x = (w - text_w) // 2
-            draw.text((text_x, h // 2), complete_text, fill=1)
+            text_y = (h - text_h) // 2
+            draw.text((text_x, text_y), complete_text, fill=1)
             
         # Show learned notes on the left side
         for i, note in enumerate(self.learned_notes):
