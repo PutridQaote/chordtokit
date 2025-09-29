@@ -9,7 +9,7 @@ class HomeScreen(Screen):
     def __init__(self):
         self.items = [
             "Chord Capture",
-            "Learn Mapping",
+            "Learn Mapping", 
             "MIDI Settings",
             "Utilities",
         ]
@@ -27,12 +27,15 @@ class HomeScreen(Screen):
         if key == BUTTON_SELECT:
             label = self.items[self.sel]
             if label == "MIDI Settings":
+                # Use local import to avoid circular dependency
                 from .settings_screens import MidiSettingsScreen
                 return ScreenResult(push=MidiSettingsScreen(), dirty=True)
             elif label == "Chord Capture":
+                # Use local import to avoid circular dependency
                 from .chord_screens import ChordCaptureMenuScreen
                 return ScreenResult(push=ChordCaptureMenuScreen(), dirty=True)
             elif label == "Learn Mapping":
+                # Use local import to avoid circular dependency
                 from .chord_screens import LearnMappingScreen
                 if self._chord_capture:
                     screen = LearnMappingScreen(self._chord_capture, config=self._cfg)
@@ -40,6 +43,7 @@ class HomeScreen(Screen):
                     return ScreenResult(push=screen, dirty=True)
                 return ScreenResult(dirty=False)
             elif label == "Utilities":
+                # Use local import to avoid circular dependency
                 from .settings_screens import UtilitiesScreen
                 return ScreenResult(push=UtilitiesScreen(), dirty=True)
             return ScreenResult(dirty=False)
@@ -76,7 +80,7 @@ class ShutdownConfirmScreen(Screen):
             self.shutting_down = True
             return ScreenResult(dirty=True)  # Update to show "safe to unplug"
         return ScreenResult(dirty=False)
-    
+
     def _shutdown(self):
         """Perform system shutdown."""
         try:
