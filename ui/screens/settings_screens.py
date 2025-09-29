@@ -152,26 +152,39 @@ class UtilitiesScreen(Screen):
         return ScreenResult(dirty=True)
 
     def _cycle_led_brightness(self):
-        """Cycle through LED brightness levels: 0.2, 0.5, 1.0, back to 0.2"""
+        """Cycle through LED brightness levels: Off, 25%, 50%, 75%, 100%"""
         if not self._cfg or not self._neokey:
             return ScreenResult(dirty=False)
         
         current = float(self._cfg.get("led_backlight_brightness", 1.0))
         
-        # Cycle through brightness levels
-        if current <= 0.2:
+        # Cycle through brightness levels: 0.0, 0.25, 0.5, 0.75, 1.0
+        if current <= 0.0:
+            new_brightness = 0.25
+        elif current <= 0.25:
             new_brightness = 0.5
         elif current <= 0.5:
+            new_brightness = 0.75
+        elif current <= 0.75:
             new_brightness = 1.0
         else:
-            new_brightness = 0.2
+            new_brightness = 0.0  # Back to off
             
         # Update config
         self._cfg.set("led_backlight_brightness", new_brightness)
         self._cfg.save()
         
-        # Apply to hardware - use the correct method name
+        # Apply to hardware - need to update both brightness and re-apply colors
         self._neokey.brightness = new_brightness
+        
+        # If brightness is 0, turn off backlights, otherwise ensure they're on
+        if new_brightness == 0.0:
+            self._neokey.backlight_enabled = False
+        else:
+            self._neokey.backlight_enabled = True
+            # Re-apply the current backlight color to make the brightness change visible
+            current_color = tuple(self._cfg.get("led_backlight_color", [84, 255, 61]))
+            self._neokey.backlight_color = current_color
         
         return ScreenResult(dirty=True)
 
@@ -179,10 +192,17 @@ class UtilitiesScreen(Screen):
         """Get the current LED brightness as a label."""
         if not self._cfg:
             return "100%"
-        brightness = self._cfg.get("led_backlight_brightness", 1.0)
-        if brightness == 0.0:
+        brightness = float(self._cfg.get("led_backlight_brightness", 1.0))
+        if brightness <= 0.0:
             return "Off"
-        return f"{int(brightness * 100)}%"
+        elif brightness <= 0.25:
+            return "25%"
+        elif brightness <= 0.5:
+            return "50%"
+        elif brightness <= 0.75:
+            return "75%"
+        else:
+            return "100%"
 
     def on_key(self, key: int) -> ScreenResult:
         if key == BUTTON_UP:
