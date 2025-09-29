@@ -88,7 +88,7 @@ class ShutdownConfirmScreen(Screen):
             
             # Turn off NeoKey LEDs first
             if self.neokey:
-                self.neokey.set_brightness(0.0)
+                self.neokey.brightness = 0.0  # Use property, not method
                 print("NeoKey LEDs turned off")
             
             # Use threading to delay shutdown so we can show "safe to unplug" first
