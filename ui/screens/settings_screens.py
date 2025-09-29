@@ -152,24 +152,28 @@ class UtilitiesScreen(Screen):
         return ScreenResult(dirty=True)
 
     def _cycle_led_brightness(self):
-        """Cycle through LED brightness levels: 100%, 75%, 50%, 25%, Off."""
-        if self._cfg and self._neokey:
-            current = self._cfg.get("led_backlight_brightness", 1.0)
-            levels = [1.0, 0.75, 0.5, 0.25, 0.0]
-            try:
-                current_index = levels.index(current)
-                new_index = (current_index + 1) % len(levels)
-            except ValueError:
-                new_index = 0  # Default to 100% if current value not in list
+        """Cycle through LED brightness levels: 0.2, 0.5, 1.0, back to 0.2"""
+        if not self._cfg or not self._neokey:
+            return ScreenResult(dirty=False)
+        
+        current = float(self._cfg.get("led_backlight_brightness", 1.0))
+        
+        # Cycle through brightness levels
+        if current <= 0.2:
+            new_brightness = 0.5
+        elif current <= 0.5:
+            new_brightness = 1.0
+        else:
+            new_brightness = 0.2
             
-            new_brightness = levels[new_index]
-            self._cfg.set("led_backlight_brightness", new_brightness)
-            self._cfg.save()
-            
-            # Update NeoKey brightness immediately
-            self._neokey.set_brightness(new_brightness)
-            
-            print(f"LED brightness set to {int(new_brightness * 100)}%")
+        # Update config
+        self._cfg.set("led_backlight_brightness", new_brightness)
+        self._cfg.save()
+        
+        # Apply to hardware - use the correct method name
+        self._neokey.brightness = new_brightness
+        
+        return ScreenResult(dirty=True)
 
     def _get_led_brightness_label(self) -> str:
         """Get the current LED brightness as a label."""
