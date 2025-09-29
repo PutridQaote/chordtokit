@@ -233,7 +233,8 @@ class LearnMappingScreen(BaseCaptureScreen):
         # Show which trigger we're learning in the center
         if self.current_trigger < len(self.trigger_names):
             trigger_name = self.trigger_names[self.current_trigger]
-            step_text = f"Hit {trigger_name}"
+            trigger_number = self.current_trigger + 1  # 1-based numbering
+            step_text = f"Hit {trigger_name} ({trigger_number})"
             
             # Center the trigger instruction in the exact middle of screen
             bbox = draw.textbbox((0, 0), step_text)
