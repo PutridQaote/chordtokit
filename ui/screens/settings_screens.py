@@ -174,17 +174,15 @@ class UtilitiesScreen(Screen):
         self._cfg.set("led_backlight_brightness", new_brightness)
         self._cfg.save()
         
-        # Apply to hardware - need to update both brightness and re-apply colors
-        self._neokey.brightness = new_brightness
-        
-        # If brightness is 0, turn off backlights, otherwise ensure they're on
+        # Apply to hardware - use the correct method calls
         if new_brightness == 0.0:
-            self._neokey.backlight_enabled = False
+            self._neokey.set_backlight_enabled(False)
         else:
-            self._neokey.backlight_enabled = True
+            self._neokey.set_backlight_brightness(new_brightness)
+            self._neokey.set_backlight_enabled(True)
             # Re-apply the current backlight color to make the brightness change visible
             current_color = tuple(self._cfg.get("led_backlight_color", [84, 255, 61]))
-            self._neokey.backlight_color = current_color
+            self._neokey.set_backlight_color(current_color)
         
         return ScreenResult(dirty=True)
 
