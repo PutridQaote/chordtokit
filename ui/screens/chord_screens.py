@@ -129,7 +129,7 @@ class LearnMappingScreen(BaseCaptureScreen):
         super().__init__(chord_capture, turns=2, 
                         config_key="spiral_turns_learn", config=config)
         
-        self.trigger_names = ["KICK", "SNARE", "HI-HAT", "RIDE"]
+        self.trigger_names = ["KICK", "SNARE", "HI-HAT", "RIDE"]  # Hardware trigger order 1-4
         self.current_trigger = 0  # Index into trigger_names
         self.learned_notes = []   # Notes we've captured
         self.auto_continue_to_single = auto_continue_to_single  # Auto-launch single capture when done
@@ -253,12 +253,10 @@ class LearnMappingScreen(BaseCaptureScreen):
             text_y = (h - text_h) // 2
             draw.text((text_x, text_y), complete_text, fill=1)
             
-        # Show learned notes on the left side
-        for i, note in enumerate(self.learned_notes):
-            if i < len(self.trigger_names):
-                trigger_name = self.trigger_names[i]
-                note_text = f"{trigger_name[:4]}: {note_to_name(note)}"
-                draw.text((4, 16 + i * 10), note_text, fill=1)
+        # Show minimal learned progress dots on the left side
+        for i in range(len(self.learned_notes)):
+            y_pos = 16 + i * 8  # Smaller vertical spacing
+            draw.text((2, y_pos), "•", fill=1)  # Just a dot, very minimal
 
 
 class ChordCaptureScreen(BaseCaptureScreen):

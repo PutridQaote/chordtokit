@@ -47,4 +47,4 @@ OLED_SIZE      = (OLED_WIDTH, OLED_HEIGHT)
 #----------------------//
 
 DDTI_TEMPLATE_PATH = ROOT / "data" / "kit0_clean.bin"
-DDTI_NOTE_OFFSETS = [11, 17, 23, 29]
+DDTI_NOTE_OFFSETS = [11, 17, 23, 29]  # Corresponds to trigger inputs: Kick (1), Snare (2), Hi-Hat (3), Ride (4)

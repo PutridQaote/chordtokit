@@ -127,7 +127,18 @@ class ChordCapture:
                 chord = sorted(list(OrderedDict.fromkeys(self.bucket)))[:self.max_notes]
             
             if len(chord) == self.max_notes:
-                final_chord = self._apply_octave_down(chord) if self.octave_down_lowest else chord
+                # Sort chord highest to lowest, then reorder for drum mapping
+                sorted_chord = sorted(chord, reverse=True)  # [highest, 2nd, 3rd, lowest]
+                
+                # Reorder to match hardware: [kick=lowest, snare=highest, hihat=2nd_highest, ride=3rd_highest]
+                final_chord = [
+                    sorted_chord[3],  # kick gets lowest note (index 3)
+                    sorted_chord[0],  # snare gets highest note (index 0) 
+                    sorted_chord[1],  # hi-hat gets 2nd highest (index 1)
+                    sorted_chord[2]   # ride gets 3rd highest (index 2)
+                ]
+                
+                final_chord = self._apply_octave_down(final_chord) if self.octave_down_lowest else final_chord
                 try:
                     prev_state = self.ddti.get_current_state()
                     if prev_state:
